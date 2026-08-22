@@ -1,1 +1,1 @@
-{ "installCommand": "npm install --omit=optional" }
+{ "installCommand": "npm install --os=linux --cpu=x64" }
