@@ -1,1 +1,1 @@
-{ "installCommand": "npm install" }
+{ "installCommand": "npm install --target_platform=linux --target_arch=x64" }
