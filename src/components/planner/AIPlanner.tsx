@@ -157,7 +157,7 @@ export function AIPlanner({
           </div>
 
           <div className="flex gap-2">
-            <Textarea
+            <CustomTextarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder="Ask me to reschedule, prioritize, or explain your day..."
@@ -234,9 +234,9 @@ function RecommendationCard({ recommendation, onAccept, onReject }: { recommenda
   )
 }
 
-interface TextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
+interface CustomTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
 
-const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
+const CustomTextarea = React.forwardRef<HTMLTextAreaElement, CustomTextareaProps>(
   ({ className, ...props }, ref) => (
     <textarea
       ref={ref}
@@ -248,7 +248,7 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
     />
   )
 )
-Textarea.displayName = 'Textarea'
+CustomTextarea.displayName = 'CustomTextarea'
 
 function generateAIResponse(input: string, tasks: Task[]) {
   const lower = input.toLowerCase()
