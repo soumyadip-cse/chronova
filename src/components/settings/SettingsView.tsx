@@ -68,7 +68,7 @@ export function SettingsView({ user, onUpdate, reducedMotion, onReducedMotionCha
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-border/50 px-4 py-4">
+      <div className="border-b border-b px-4 py-4">
         <h1 className="font-heading text-2xl font-semibold">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">Customize Chronova to match your workflow</p>
       </div>
