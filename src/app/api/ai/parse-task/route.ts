@@ -31,9 +31,11 @@ async function handleParseTask(request: NextRequest) {
     currentTimeUtc: new Date().toISOString(),
   };
 
-  const parsedTask = await parseTaskWithAI(input, context);
+  // Never trust AI output blindly: parser validates via zod and degrades to a
+  // deterministic heuristic when the provider is missing, slow, or malformed.
+  const result = await parseTaskWithAI(input, context);
 
-  return NextResponse.json({ parsedTask });
+  return NextResponse.json(result);
 }
 
 export const POST = withAIRateLimit(handleParseTask);

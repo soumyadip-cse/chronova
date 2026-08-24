@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { Layout } from '@/components/layout/Layout';
 import { TaskInbox } from '@/components/tasks/TaskInbox';
+import { SmartTaskInput } from '@/components/tasks/smart-task-input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -220,6 +221,9 @@ export default function InboxPage() {
   return (
     <Layout>
       <div className="space-y-6">
+        {/* AI natural-language capture: parse → confirm → create */}
+        <SmartTaskInput onCreated={(created) => setTasks((prev) => [created, ...prev])} />
+
         {/* Quick Add */}
         <Card className="glass">
           <CardContent className="pt-4">
