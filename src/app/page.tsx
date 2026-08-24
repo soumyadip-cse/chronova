@@ -83,10 +83,10 @@ export default function HomePage() {
               </div>
               <div className="flex items-center gap-4">
                 <Button variant="ghost" size="sm" asChild>
-                  <Link href="/dashboard">Sign In</Link>
+                  <Link href="/login">Sign In</Link>
                 </Button>
                 <Button size="sm" asChild>
-                  <Link href="/onboarding">Get Started</Link>
+                  <Link href="/signup">Get Started</Link>
                 </Button>
               </div>
             </div>
@@ -130,7 +130,7 @@ export default function HomePage() {
               className="flex flex-col sm:flex-row items-center justify-center gap-4"
             >
               <Button size="lg" className="gap-2 w-full sm:w-auto" asChild>
-                <Link href="/onboarding">
+                <Link href="/signup">
                   Start Free Trial
                   <ArrowRight className="h-4 w-4" />
                 </Link>

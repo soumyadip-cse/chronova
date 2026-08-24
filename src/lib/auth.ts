@@ -7,6 +7,17 @@ import { eq } from 'drizzle-orm';
 import { compare } from 'bcryptjs';
 import { generateId } from '@/lib/utils';
 
+// Constant-time equalization: real bcrypt compare runs on both miss and hit paths.
+const DUMMY_BCRYPT_HASH = '$2a$10$abcdefghijklmnopqrstuvCwTycUXWue0Thq9StjUM0uJ8Z1Oy';
+
+async function verifyPassword(password: string, hash: string | null): Promise<boolean> {
+  if (!hash) {
+    await compare(password, DUMMY_BCRYPT_HASH);
+    return false;
+  }
+  return compare(password, hash);
+}
+
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -26,11 +37,7 @@ export const authOptions: NextAuthOptions = {
           .where(eq(users.email, credentials.email))
           .limit(1);
 
-        if (!user[0] || !user[0].passwordHash) {
-          throw new Error('Invalid credentials');
-        }
-
-        const isValid = await compare(credentials.password, user[0].passwordHash);
+        const isValid = await verifyPassword(credentials.password, user[0]?.passwordHash ?? null);
         if (!isValid) {
           throw new Error('Invalid credentials');
         }
@@ -92,6 +99,11 @@ export const authOptions: NextAuthOptions = {
 
           user.id = newUserId;
         } else {
+          // Email exists and is registered with a password — refuse silent identity
+          // merge to prevent account pre-hijack via credentials signup + Google OAuth.
+          if (existingUser[0].passwordHash) {
+            return false;
+          }
           user.id = existingUser[0].id;
         }
       }
@@ -104,8 +116,6 @@ export const authOptions: NextAuthOptions = {
         token.timezone = (user as any).timezone;
       }
       if (account) {
-        token.accessToken = account.access_token;
-        token.refreshToken = account.refresh_token;
         token.provider = account.provider;
       }
       return token;

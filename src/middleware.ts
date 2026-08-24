@@ -30,17 +30,24 @@ export default withAuth(
     return res;
   },
   {
+    pages: {
+      signIn: '/login',
+    },
     callbacks: {
       authorized: ({ token, req }) => {
         const path = req.nextUrl.pathname;
 
-        if (
-          path.startsWith('/api/auth') ||
-          path === '/login' ||
-          path === '/signup' ||
-          path === '/onboarding' ||
-          path === '/'
-        ) {
+        // Public API surface
+        if (path.startsWith('/api/auth') || path === '/api/health') {
+          return true;
+        }
+
+        // All other APIs default-deny: require an authenticated session.
+        if (path.startsWith('/api/')) {
+          return !!token;
+        }
+
+        if (path === '/login' || path === '/signup' || path === '/onboarding' || path === '/') {
           return true;
         }
 

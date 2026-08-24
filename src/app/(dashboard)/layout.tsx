@@ -77,6 +77,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const { toggle: toggleCommandPalette } = useCommandPaletteContext();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [expandedSections, setExpandedSections] = React.useState<string[]>([]);
+  const [currentTime, setCurrentTime] = React.useState('');
+
+  React.useEffect(() => {
+    const update = () =>
+      setCurrentTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const toggleSection = (section: string) => {
     setExpandedSections((prev) =>
@@ -109,9 +118,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         )}
       >
         <div className="flex h-16 items-center justify-between px-4 border-b border-border">
-          <Link href="/dashboard" className="flex items-center gap-2" aria-label="Nexora home">
+          <Link href="/dashboard" className="flex items-center gap-2" aria-label="Chronova home">
             <Zap className="h-8 w-8 text-primary" />
-            <span className="font-heading text-xl font-bold">Nexora</span>
+            <span className="font-heading text-xl font-bold">Chronova</span>
           </Link>
           <Button
             variant="ghost"
@@ -284,28 +293,13 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           <div className="flex items-center gap-2">
             <div className="hidden md:flex items-center gap-1 px-3 py-1.5 rounded-lg bg-muted/50 text-xs text-muted-foreground font-mono">
-              <span id="current-time"></span>
+              <span>{currentTime}</span>
             </div>
           </div>
         </header>
 
         <div className="p-4 lg:p-6">{children}</div>
       </main>
-
-      <script
-        dangerouslySetInnerHTML={{
-          __html: `
-            function updateTime() {
-              const el = document.getElementById('current-time');
-              if (el) {
-                el.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-              }
-            }
-            setInterval(updateTime, 1000);
-            updateTime();
-          `,
-        }}
-      />
     </div>
   );
 }

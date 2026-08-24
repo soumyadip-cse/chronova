@@ -165,6 +165,15 @@ export async function DELETE(
     );
   }
 
+  const existing = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.id, id), eq(tasks.userId, session.user.id)))
+    .limit(1);
+  if (!existing[0]) {
+    return NextResponse.json({ error: 'Task not found' }, { status: 404 });
+  }
+
   await db
     .delete(scheduleBlocks)
     .where(and(eq(scheduleBlocks.taskId, id), eq(scheduleBlocks.userId, session.user.id)));

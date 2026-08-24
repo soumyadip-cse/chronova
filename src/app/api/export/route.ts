@@ -66,10 +66,10 @@ async function handleExport(request: NextRequest) {
 
     if (format === 'json') {
       mimeType = 'application/json';
-      filename = `nexora-export-${new Date().toISOString().split('T')[0]}.json`;
+      filename = `chronova-export-${new Date().toISOString().split('T')[0]}.json`;
     } else {
       mimeType = 'text/csv';
-      filename = `nexora-export-${new Date().toISOString().split('T')[0]}.csv`;
+      filename = `chronova-export-${new Date().toISOString().split('T')[0]}.csv`;
     }
 
     // Stream the response directly instead of creating a blob URL

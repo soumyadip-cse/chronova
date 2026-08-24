@@ -34,7 +34,7 @@ export const parsedTaskSchema = z.object({
 
 export type ParsedTask = z.infer<typeof parsedTaskSchema>;
 
-const SYSTEM_PROMPT = `You are Nexora AI's task parser. Convert natural language into structured task data.
+const SYSTEM_PROMPT = `You are Chronova's task parser. Convert natural language into structured task data.
 
 Rules:
 1. Extract title, deadline, priority, duration, energy level
