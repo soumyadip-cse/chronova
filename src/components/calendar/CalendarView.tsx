@@ -1,295 +1,218 @@
-'use client'
+'use client';
 
-import * as React from 'react'
-import { motion } from 'framer-motion'
-import { cn } from '@/lib/utils'
-import { 
-  ChevronLeft, 
-  ChevronRight, 
-  Today, 
-  Plus,
+import * as React from 'react';
+import { motion } from 'framer-motion';
+import { cn } from '@/lib/utils';
+import {
+  ChevronLeft,
+  ChevronRight,
   Calendar,
-  Clock,
+  LayoutGrid,
+  List,
+  Plus,
+  RotateCcw,
+  AlertTriangle,
   Zap,
   Coffee,
-  Sun,
   Moon,
-  RotateCcw
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { CalendarEvent, EnergyForecast } from '@/types'
-import { formatTime, formatDate, formatDateShort } from '@/lib/utils'
+  Sun,
+  Target,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
+import { CalendarEvent, CalendarView, EnergyForecast } from '@/types';
+import { formatTime, formatDate, formatDateShort } from '@/lib/utils';
 
 interface CalendarViewProps {
-  events: CalendarEvent[]
-  energyForecast: EnergyForecast[]
-  view: 'day' | 'week' | 'agenda'
-  onViewChange: (view: 'day' | 'week' | 'agenda') => void
-  onEventClick: (event: CalendarEvent) => void
-  onDateChange: (date: Date) => void
-  selectedDate: Date
-  onCreateEvent: (date: Date) => void
+  events: CalendarEvent[];
+  energyForecast: EnergyForecast[];
+  view: CalendarView;
+  onViewChange: (view: string) => void;
+  onDateChange: (date: Date) => void;
+  onEventClick: (event: CalendarEvent) => void;
+  onCreateEvent: (date: Date) => void;
+  selectedDate: Date;
+  reducedMotion?: boolean;
 }
 
-const HOURS = Array.from({ length: 18 }, (_, i) => i + 6) // 6am - 11pm
+const EVENT_TYPE_CONFIG = {
+  meeting: { label: 'Meeting', icon: Target, color: 'bg-blue-500' },
+  focus: { label: 'Focus', icon: Zap, color: 'bg-green-500' },
+  break: { label: 'Break', icon: Coffee, color: 'bg-amber-500' },
+  flexible: { label: 'Flexible', icon: Moon, color: 'bg-purple-500' },
+  personal: { label: 'Personal', icon: Sun, color: 'bg-pink-500' },
+};
 
-export function CalendarView({
+const HOURS = Array.from({ length: 24 }, (_, i) => i);
+
+function TimeGrid({
   events,
   energyForecast,
-  view,
-  onViewChange,
+  date,
+  onEventClick,
+  reducedMotion,
+}: {
+  events: CalendarEvent[];
+  energyForecast: EnergyForecast[];
+  date: Date;
+  onEventClick: (event: CalendarEvent) => void;
+  reducedMotion?: boolean;
+}) {
+  const dayEvents = events
+    .filter((e) => e.start.toDateString() === date.toDateString())
+    .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+  const getEnergyForHour = (hour: number) => {
+    return energyForecast.find((f) => f.hour === hour)?.level || 'low';
+  };
+
+  return (
+    <div className="relative">
+      {/* Time column */}
+      <div className="absolute left-0 top-0 bottom-0 w-16 flex flex-col">
+        {HOURS.map((hour) => (
+          <div key={hour} className="flex-1 border-b border-border/30 relative">
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground font-mono">
+              {hour.toString().padStart(2, '0')}:00
+            </span>
+            <div
+              className="absolute right-0 top-0 bottom-0 w-2"
+              style={{
+                background:
+                  getEnergyForHour(hour) === 'high'
+                    ? 'hsl(var(--primary)/0.1)'
+                    : getEnergyForHour(hour) === 'balanced'
+                      ? 'hsl(var(--accent)/0.1)'
+                      : 'transparent',
+              }}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* Events grid */}
+      <div className="ml-16 relative h-full">
+        {HOURS.map((hour) => (
+          <div key={hour} className="relative border-b border-border/30 min-h-[60px]">
+            {dayEvents
+              .filter((e) => e.start.getHours() <= hour && e.end.getHours() > hour)
+              .map((event, index) => {
+                const startHour = event.start.getHours() + event.start.getMinutes() / 60;
+                const endHour = event.end.getHours() + event.end.getMinutes() / 60;
+                const top = (((startHour - hour) * 60) / (endHour - startHour)) * 60;
+                const height = (endHour - startHour) * 60;
+
+                return (
+                  <motion.div
+                    key={event.id}
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    onClick={() => onEventClick(event)}
+                    className="absolute left-2 right-2 cursor-pointer rounded-lg transition-all hover:shadow-lg hover:z-10"
+                    style={{
+                      top: `${top}px`,
+                      height: `${height}px`,
+                      backgroundColor: event.color,
+                    }}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => e.key === 'Enter' && onEventClick(event)}
+                    aria-label={`${event.title}, ${formatTime(event.start)} to ${formatTime(event.end)}`}
+                  >
+                    <div className="p-2 text-white text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium truncate">{event.title}</span>
+                        {((EventIcon) => <EventIcon className="h-3 w-3 opacity-80" />)(
+                          EVENT_TYPE_CONFIG[event.type].icon
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between mt-1">
+                        <span className="opacity-90">
+                          {formatTime(event.start)}–{formatTime(event.end)}
+                        </span>
+                        <Badge variant="outline" className="text-[10px] px-1.5 py-0.5">
+                          {EVENT_TYPE_CONFIG[event.type].label}
+                        </Badge>
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
+          </div>
+        ))}
+
+        {/* Current time indicator */}
+        {date.toDateString() === new Date().toDateString() && (
+          <motion.div
+            className="absolute left-0 right-0 h-0.5 bg-destructive shadow-[0_0_8px_hsl(var(--destructive))]"
+            style={{ top: `${(new Date().getMinutes() / 60) * 60}px` }}
+            animate={{
+              boxShadow: ['0 0 8px hsl(var(--destructive))', '0 0 16px hsl(var(--destructive))'],
+            }}
+            transition={{ duration: 1, repeat: Infinity }}
+          >
+            <div className="absolute left-16 -translate-y-1/2 flex items-center gap-1 bg-destructive text-destructive-foreground px-2 py-0.5 rounded text-xs font-mono">
+              NOW
+            </div>
+          </motion.div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WeekView({
+  events,
+  energyForecast,
+  date,
   onEventClick,
   onDateChange,
-  selectedDate,
-  onCreateEvent,
-}: CalendarViewProps) {
-  const [currentDate, setCurrentDate] = React.useState(selectedDate)
-
-  const navigateDate = (direction: 'prev' | 'next') => {
-    const newDate = new Date(currentDate)
-    if (view === 'day') newDate.setDate(newDate.getDate() + (direction === 'next' ? 1 : -1))
-    if (view === 'week') newDate.setDate(newDate.getDate() + (direction === 'next' ? 7 : -7))
-    setCurrentDate(newDate)
-    onDateChange(newDate)
-  }
-
-  const dayEvents = React.useMemo(() => {
-    return events.filter(e => 
-      e.start.toDateString() === currentDate.toDateString()
-    ).sort((a, b) => a.start.getTime() - b.start.getTime())
-  }, [events, currentDate])
-
-  const weekEvents = React.useMemo(() => {
-    const weekStart = new Date(currentDate)
-    weekStart.setDate(weekStart.getDate() - weekStart.getDay())
-    const weekEnd = new Date(weekStart)
-    weekEnd.setDate(weekEnd.getDate() + 6)
-    
-    return events.filter(e => 
-      e.start >= weekStart && e.start <= weekEnd
-    )
-  }, [events, currentDate])
-
-  const getEventTop = (date: Date) => {
-    const hour = date.getHours() + date.getMinutes() / 60
-    return ((hour - 6) / 18) * 100
-  }
-
-  const getEventHeight = (start: Date, end: Date) => {
-    const startHour = start.getHours() + start.getMinutes() / 60
-    const endHour = end.getHours() + end.getMinutes() / 60
-    return ((endHour - startHour) / 18) * 100
-  }
-
-  const eventColors: Record<CalendarEvent['type'], string> = {
-    meeting: 'bg-blue-500/20 border-blue-500/50 text-blue-400',
-    focus: 'bg-green-500/20 border-green-500/50 text-green-400',
-    break: 'bg-amber-500/20 border-amber-500/50 text-amber-400',
-    flexible: 'bg-purple-500/20 border-purple-500/50 text-purple-400',
-    personal: 'bg-gray-500/20 border-gray-500/50 text-gray-400',
-  }
-
-  const eventIcons: Record<CalendarEvent['type'], React.ReactNode> = {
-    meeting: <Calendar className="h-3 w-3" aria-hidden="true" />,
-    focus: <Zap className="h-3 w-3" aria-hidden="true" />,
-    break: <Coffee className="h-3 w-3" aria-hidden="true" />,
-    flexible: <Sun className="h-3 w-3" aria-hidden="true" />,
-    personal: <Moon className="h-3 w-3" aria-hidden="true" />,
-  }
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border/50 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => navigateDate('prev')} aria-label="Previous">
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <Button variant="ghost" onClick={() => { setCurrentDate(new Date()); onDateChange(new Date()); }}>
-            {view === 'day' ? formatDate(currentDate) : view === 'week' ? `Week of ${formatDateShort(currentDate)}` : 'Agenda View'}
-          </Button>
-          <Button variant="outline" size="icon" onClick={() => navigateDate('next')} aria-label="Next">
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </div>
-
-        <div className="flex items-center gap-1">
-          {(['day', 'week', 'agenda'] as const).map(v => (
-            <Button
-              key={v}
-              variant={view === v ? 'default' : 'ghost'}
-              size="sm"
-              onClick={() => onViewChange(v)}
-            >
-              {v.charAt(0).toUpperCase() + v.slice(1)}
-            </Button>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => onCreateEvent(currentDate)}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Event
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-hidden">
-        {view === 'day' && (
-          <DayView
-            date={currentDate}
-            events={dayEvents}
-            energyForecast={energyForecast}
-            onEventClick={onEventClick}
-            getEventTop={getEventTop}
-            getEventHeight={getEventHeight}
-            eventColors={eventColors}
-            eventIcons={eventIcons}
-          />
-        )}
-
-        {view === 'week' && (
-          <WeekView
-            date={currentDate}
-            events={weekEvents}
-            onEventClick={onEventClick}
-            eventColors={eventColors}
-            eventIcons={eventIcons}
-          />
-        )}
-
-        {view === 'agenda' && (
-          <AgendaView
-            events={events}
-            onEventClick={onEventClick}
-            eventColors={eventColors}
-            eventIcons={eventIcons}
-          />
-        )}
-      </div>
-    </div>
-  )
-}
-
-function DayView({ 
-  date, 
-  events, 
-  energyForecast, 
-  onEventClick, 
-  getEventTop, 
-  getEventHeight,
-  eventColors,
-  eventIcons,
+  reducedMotion,
 }: {
-  date: Date
-  events: CalendarEvent[]
-  energyForecast: EnergyForecast[]
-  onEventClick: (event: CalendarEvent) => void
-  getEventTop: (date: Date) => number
-  getEventHeight: (start: Date, end: Date) => number
-  eventColors: Record<CalendarEvent['type'], string>
-  eventIcons: Record<CalendarEvent['type'], React.ReactNode>
+  events: CalendarEvent[];
+  energyForecast: EnergyForecast[];
+  date: Date;
+  onEventClick: (event: CalendarEvent) => void;
+  onDateChange: (date: Date) => void;
+  reducedMotion?: boolean;
 }) {
-  return (
-    <div className="relative h-full">
-      <div className="absolute inset-0 grid grid-cols-[60px_1fr]">
-        <div className="border-r border-border/50">
-          {HOURS.map(hour => (
-            <div key={hour} className="relative h-[calc(100%/18)] border-b border-border/30 px-2 py-1 text-right text-xs text-muted-foreground">
-              {hour === 12 ? '12 PM' : hour > 12 ? `${hour - 12} PM` : `${hour} AM`}
-            </div>
-          ))}
-        </div>
-        <div className="relative overflow-y-auto h-full">
-          <div className="absolute inset-0">
-            {HOURS.map(hour => (
-              <div key={hour} className="h-[calc(100%/18)] border-b border-border/30" />
-            ))}
-          </div>
-
-          {energyForecast.map(forecast => {
-            if (forecast.hour < 6 || forecast.hour > 23) return null
-            const top = ((forecast.hour - 6) / 18) * 100
-            const color = forecast.level === 'high' ? 'bg-green-400/10' : forecast.level === 'balanced' ? 'bg-cyan-400/10' : 'bg-amber-400/10'
-            return (
-              <div
-                key={forecast.hour}
-                className={cn('absolute left-0 right-0 h-[calc(100%/18)]', color)}
-                style={{ top: `${top}%` }}
-              />
-            )
-          })}
-
-          {events.map(event => (
-            <motion.button
-              key={event.id}
-              onClick={() => onEventClick(event)}
-              className={cn(
-                'absolute left-4 right-4 rounded-lg border px-3 py-2 text-sm font-medium transition-all hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                eventColors[event.type]
-              )}
-              style={{
-                top: `${getEventTop(event.start)}%`,
-                height: `${Math.max(getEventHeight(event.start, event.end), 3)}%`,
-                zIndex: 10,
-              }}
-              aria-label={`${event.title}, ${formatTime(event.start)} to ${formatTime(event.end)}`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  {eventIcons[event.type]}
-                  <span className="truncate">{event.title}</span>
-                </div>
-                <span className="text-xs font-mono opacity-70">
-                  {formatTime(event.start)}–{formatTime(event.end)}
-                </span>
-              </div>
-            </motion.button>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function WeekView({ 
-  date, 
-  events, 
-  onEventClick, 
-  eventColors,
-  eventIcons,
-}: {
-  date: Date
-  events: CalendarEvent[]
-  onEventClick: (event: CalendarEvent) => void
-  eventColors: Record<CalendarEvent['type'], string>
-  eventIcons: Record<CalendarEvent['type'], React.ReactNode>
-}) {
-  const weekStart = React.useMemo(() => {
-    const d = new Date(date)
-    d.setDate(d.getDate() - d.getDay())
-    return d
-  }, [date])
-
-  const days = React.useMemo(() => {
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(weekStart)
-      d.setDate(d.getDate() + i)
-      return d
-    })
-  }, [weekStart])
+  const startOfWeek = new Date(date);
+  startOfWeek.setDate(date.getDate() - date.getDay());
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(startOfWeek);
+    d.setDate(startOfWeek.getDate() + i);
+    return d;
+  });
 
   return (
-    <div className="h-full overflow-x-auto">
-      <table className="w-full min-w-[900px] border-collapse">
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[800px]" role="grid">
         <thead>
-          <tr className="border-b border-border/50">
-            <th className="w-20 p-2 text-xs text-muted-foreground">Time</th>
-            {days.map(day => (
-              <th key={day.toISOString()} className="p-2 text-center border-l border-border/30">
-                <div className="text-xs text-muted-foreground">{day.toLocaleDateString('en-US', { weekday: 'short' })}</div>
-                <div className={cn('font-heading font-semibold', day.toDateString() === new Date().toDateString() && 'text-primary')}>
+          <tr>
+            <th className="w-16 p-2 text-xs text-muted-foreground font-mono">Time</th>
+            {days.map((day) => (
+              <th key={day.toISOString()} className="p-2 text-center border-b border-border">
+                <div className="font-medium">
+                  {day.toLocaleDateString('en-US', { weekday: 'short' })}
+                </div>
+                <div
+                  className={cn(
+                    'text-sm',
+                    day.toDateString() === new Date().toDateString() && 'text-primary font-bold'
+                  )}
+                >
                   {day.getDate()}
                 </div>
               </th>
@@ -297,127 +220,337 @@ function WeekView({
           </tr>
         </thead>
         <tbody>
-          {HOURS.map(hour => (
-            <tr key={hour} className="border-b border-border/30">
-              <td className="w-20 p-1 text-right text-xs text-muted-foreground pr-2">
-                {hour === 12 ? '12 PM' : hour > 12 ? `${hour - 12} PM` : `${hour} AM`}
+          {HOURS.map((hour) => (
+            <tr key={hour}>
+              <td className="p-1 text-xs text-muted-foreground font-mono sticky left-0 bg-background/80 backdrop-blur">
+                {hour.toString().padStart(2, '0')}:00
               </td>
-              {days.map(day => {
-                const dayEvents = events.filter(e => e.start.toDateString() === day.toDateString())
-                const hourEvents = dayEvents.filter(e => {
-                  const startHour = e.start.getHours() + e.start.getMinutes() / 60
-                  const endHour = e.end.getHours() + e.end.getMinutes() / 60
-                  return hour >= startHour && hour < endHour
-                })
+              {days.map((day) => {
+                const dayEvents = events.filter(
+                  (e) =>
+                    e.start.toDateString() === day.toDateString() &&
+                    e.start.getHours() <= hour &&
+                    e.end.getHours() > hour
+                );
                 return (
-                  <td key={day.toISOString()} className="relative p-1 border-l border-border/30 min-h-[60px]">
-                    {hourEvents.map(event => (
-                      <button
+                  <td
+                    key={day.toISOString()}
+                    className="relative border-b border-border/30 min-h-[50px] p-1"
+                  >
+                    {dayEvents.map((event) => (
+                      <motion.div
                         key={event.id}
-                        onClick={(e) => { e.stopPropagation(); onEventClick(event) }}
-                        className={cn(
-                          'absolute left-1 right-1 rounded border px-1.5 py-1 text-[10px] font-medium truncate transition-all hover:shadow',
-                          eventColors[event.type]
-                        )}
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        onClick={() => onEventClick(event)}
+                        className="absolute left-0.5 right-0.5 rounded text-white text-xs p-1 cursor-pointer hover:shadow"
                         style={{
-                          top: `${((event.start.getMinutes() / 60) * 100)}%`,
-                          height: `${((event.end.getHours() + event.end.getMinutes() / 60 - event.start.getHours() - event.start.getMinutes() / 60) * 100)}%`,
+                          top: `${(event.start.getMinutes() / 60) * 50}px`,
+                          height: `${Math.max(20, ((event.end.getTime() - event.start.getTime()) / 60000 / 60) * 50)}px`,
+                          backgroundColor: event.color,
+                          zIndex: 10,
                         }}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => e.key === 'Enter' && onEventClick(event)}
                       >
-                        <span className="flex items-center gap-1">
-                          {eventIcons[event.type]}
-                          {event.title}
-                        </span>
-                      </button>
+                        <div className="truncate font-medium">{event.title}</div>
+                      </motion.div>
                     ))}
+                    {day.toDateString() === new Date().toDateString() &&
+                      hour === new Date().getHours() && (
+                        <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-destructive/50" />
+                      )}
                   </td>
-                )
+                );
               })}
             </tr>
           ))}
         </tbody>
       </table>
     </div>
-  )
+  );
 }
 
-function AgendaView({ 
-  events, 
-  onEventClick, 
-  eventColors,
-  eventIcons,
+function AgendaView({
+  events,
+  date,
+  onEventClick,
+  onDateChange,
 }: {
-  events: CalendarEvent[]
-  onEventClick: (event: CalendarEvent) => void
-  eventColors: Record<CalendarEvent['type'], string>
-  eventIcons: Record<CalendarEvent['type'], React.ReactNode>
+  events: CalendarEvent[];
+  date: Date;
+  onEventClick: (event: CalendarEvent) => void;
+  onDateChange: (date: Date) => void;
 }) {
-  const sortedEvents = React.useMemo(() => 
-    [...events].sort((a, b) => a.start.getTime() - b.start.getTime()), [events])
-
-  const groupedEvents = React.useMemo(() => {
-    const groups: Record<string, CalendarEvent[]> = {}
-    sortedEvents.forEach(event => {
-      const key = event.start.toDateString()
-      if (!groups[key]) groups[key] = []
-      groups[key].push(event)
-    })
-    return groups
-  }, [sortedEvents])
+  const startOfWeek = new Date(date);
+  startOfWeek.setDate(date.getDate() - date.getDay());
+  const days = Array.from({ length: 14 }, (_, i) => {
+    const d = new Date(startOfWeek);
+    d.setDate(startOfWeek.getDate() + i);
+    return d;
+  });
 
   return (
-    <ScrollArea className="h-full">
-      <div className="p-4 space-y-6">
-        {Object.entries(groupedEvents).map(([dateStr, dayEvents]) => (
+    <div className="space-y-6">
+      {days.map((day) => {
+        const dayEvents = events
+          .filter((e) => e.start.toDateString() === day.toDateString())
+          .sort((a, b) => a.start.getTime() - b.start.getTime());
+
+        if (dayEvents.length === 0) return null;
+
+        return (
           <motion.div
-            key={dateStr}
+            key={day.toISOString()}
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="space-y-3"
+            className="glass rounded-xl p-4"
           >
-            <div className="flex items-center gap-3">
-              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted">
-                <span className="font-heading text-lg font-semibold">{new Date(dateStr).getDate()}</span>
-              </div>
+            <div className="flex items-center justify-between mb-3">
               <div>
-                <p className="font-medium">{new Date(dateStr).toLocaleDateString('en-US', { weekday: 'long', month: 'long' })}</p>
-                <p className="text-sm text-muted-foreground">{dayEvents.length} event{dayEvents.length !== 1 ? 's' : ''}</p>
-              </div>
-            </div>
-            <div className="ml-14 space-y-2 border-l border-border/30 pl-4">
-              {dayEvents.map(event => (
-                <button
-                  key={event.id}
-                  onClick={() => onEventClick(event)}
+                <div
                   className={cn(
-                    'w-full flex items-center gap-3 rounded-lg border px-3 py-2 text-left transition-all hover:bg-accent/50',
-                    eventColors[event.type]
+                    'font-heading text-lg',
+                    day.toDateString() === new Date().toDateString() && 'text-primary'
                   )}
                 >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background/50">
-                    {eventIcons[event.type]}
+                  {day.toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    month: 'short',
+                    day: 'numeric',
+                  })}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {dayEvents.length} event{dayEvents.length !== 1 ? 's' : ''}
+                </div>
+              </div>
+              {day.toDateString() === new Date().toDateString() && (
+                <Badge variant="default" className="text-xs">
+                  Today
+                </Badge>
+              )}
+            </div>
+            <div className="space-y-2">
+              {dayEvents.map((event) => (
+                <motion.button
+                  key={event.id}
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ delay: 0.05 }}
+                  onClick={() => onEventClick(event)}
+                  className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-accent/50 transition-colors"
+                  style={{ borderLeft: `3px solid ${event.color}` }}
+                  role="button"
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted/50 text-sm font-mono text-muted-foreground">
+                    {formatTime(event.start)}–{formatTime(event.end)}
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium truncate">{event.title}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {formatTime(event.start)} – {formatTime(event.end)}
+                    <p className="text-xs text-muted-foreground capitalize">
+                      {EVENT_TYPE_CONFIG[event.type].label}
                     </p>
                   </div>
-                  <span className="text-xs font-mono text-muted-foreground">
-                    {formatTime(event.start)}–{formatTime(event.end)}
-                  </span>
-                </button>
+                  {((EventIcon) => (
+                    <EventIcon className="h-5 w-5" style={{ color: event.color }} />
+                  ))(EVENT_TYPE_CONFIG[event.type].icon)}
+                </motion.button>
               ))}
             </div>
           </motion.div>
-        ))}
-        {Object.keys(groupedEvents).length === 0 && (
-          <div className="text-center py-12 text-muted-foreground">
-            <Calendar className="h-16 w-16 mx-auto mb-4 opacity-30" aria-hidden="true" />
-            <p>No upcoming events</p>
+        );
+      })}
+    </div>
+  );
+}
+
+export function CalendarViewComponent({
+  events,
+  energyForecast,
+  view,
+  onViewChange,
+  onDateChange,
+  onEventClick,
+  onCreateEvent,
+  selectedDate,
+  reducedMotion = false,
+}: CalendarViewProps) {
+  const [currentDate, setCurrentDate] = React.useState(selectedDate);
+
+  React.useEffect(() => {
+    setCurrentDate(selectedDate);
+  }, [selectedDate]);
+
+  const navigateDate = (delta: number) => {
+    const newDate = new Date(currentDate);
+    if (view === 'day') newDate.setDate(newDate.getDate() + delta);
+    else if (view === 'week') newDate.setDate(newDate.getDate() + delta * 7);
+    else newDate.setDate(newDate.getDate() + delta * 14);
+    setCurrentDate(newDate);
+    onDateChange(newDate);
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => navigateDate(-1)}
+            aria-label="Previous period"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <div className="text-center">
+            <h1 className="font-heading text-xl font-semibold">
+              {view === 'day' && formatDate(currentDate)}
+              {view === 'week' && `Week of ${formatDateShort(currentDate)}`}
+              {view === 'agenda' && `Next 2 weeks from ${formatDateShort(currentDate)}`}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              {currentDate.toDateString() === new Date().toDateString() ? 'Today' : ''}
+            </p>
           </div>
-        )}
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => navigateDate(1)}
+            aria-label="Next period"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="flex items-center gap-2">
+          <Tabs value={view} onValueChange={onViewChange} className="hidden sm:flex">
+            <TabsList>
+              <TabsTrigger value="day">
+                <Calendar className="h-4 w-4 mr-2" /> Day
+              </TabsTrigger>
+              <TabsTrigger value="week">
+                <LayoutGrid className="h-4 w-4 mr-2" /> Week
+              </TabsTrigger>
+              <TabsTrigger value="agenda">
+                <List className="h-4 w-4 mr-2" /> Agenda
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+          <Select value={view} onValueChange={onViewChange}>
+            <SelectTrigger className="sm:hidden w-36">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="day">Day</SelectItem>
+              <SelectItem value="week">Week</SelectItem>
+              <SelectItem value="agenda">Agenda</SelectItem>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setCurrentDate(new Date());
+              onDateChange(new Date());
+            }}
+            size="sm"
+          >
+            <Calendar className="h-4 w-4 mr-2" /> Today
+          </Button>
+          <Button onClick={() => onCreateEvent(currentDate)} size="sm">
+            <Plus className="h-4 w-4 mr-2" /> New Event
+          </Button>
+        </div>
       </div>
-    </ScrollArea>
-  )
+
+      {/* Legend */}
+      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+        <span>Event types:</span>
+        {Object.entries(EVENT_TYPE_CONFIG).map(([key, config]) => (
+          <Badge
+            key={key}
+            variant="outline"
+            className={cn('gap-1', config.color.replace('bg-', 'text-') + '/80')}
+          >
+            <config.icon className="h-3 w-3" />
+            {config.label}
+          </Badge>
+        ))}
+        <div className="flex items-center gap-1 ml-4">
+          <div className="w-3 h-3 rounded bg-primary/10" />
+          <span>High energy</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <div className="w-3 h-3 rounded bg-amber-500/10" />
+          <span>Balanced</span>
+        </div>
+      </div>
+
+      {/* Calendar Content */}
+      <Card className="glass overflow-hidden">
+        <CardContent className="p-0">
+          {view === 'day' && (
+            <div className="h-[calc(100vh-350px)] min-h-[500px] relative">
+              <TimeGrid
+                events={events}
+                energyForecast={energyForecast}
+                date={currentDate}
+                onEventClick={onEventClick}
+                reducedMotion={reducedMotion}
+              />
+            </div>
+          )}
+          {view === 'week' && (
+            <div className="h-[calc(100vh-350px)] min-h-[500px] p-4">
+              <WeekView
+                events={events}
+                energyForecast={energyForecast}
+                date={currentDate}
+                onEventClick={onEventClick}
+                onDateChange={onDateChange}
+                reducedMotion={reducedMotion}
+              />
+            </div>
+          )}
+          {view === 'agenda' && (
+            <ScrollArea className="h-[calc(100vh-350px)] min-h-[500px] p-4">
+              <AgendaView
+                events={events}
+                date={currentDate}
+                onEventClick={onEventClick}
+                onDateChange={onDateChange}
+              />
+            </ScrollArea>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Recovery Plan Banner */}
+      {events.some(
+        (e) =>
+          e.type === 'meeting' && e.start > new Date() && e.start < new Date(Date.now() + 3600000)
+      ) && (
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass rounded-xl p-4 border border-amber-500/30 bg-amber-500/5"
+        >
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-amber-400 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <h4 className="font-semibold text-amber-400">Schedule Conflict Detected</h4>
+              <p className="text-sm text-muted-foreground mt-1">
+                You have overlapping meetings in the next hour. Would you like me to generate a
+                recovery plan?
+              </p>
+              <Button variant="outline" size="sm" className="mt-2">
+                <RotateCcw className="h-4 w-4 mr-2" />
+                Generate Recovery Plan
+              </Button>
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
 }

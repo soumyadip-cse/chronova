@@ -1,320 +1,591 @@
-'use client'
+'use client';
 
-import * as React from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { cn } from '@/lib/utils'
-import { 
-  Send, 
-  Zap, 
-  Loader2, 
-  CheckCircle, 
-  XCircle, 
-  AlertCircle,
-  Clock,
-  Calendar,
+import * as React from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { cn } from '@/lib/utils';
+import {
+  Send,
+  Mic,
+  Sparkles,
+  Loader2,
+  Check,
+  X,
+  Edit,
+  RefreshCw,
   Brain,
+  Zap,
+  Target,
+  Coffee,
+  Calendar,
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
   MessageSquare,
-  RotateCcw
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
-import { AIRecommendation, Task } from '@/types'
+  Plus,
+  Trash2,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Badge } from '@/components/ui/badge';
+import { Separator } from '@/components/ui/separator';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuLabel,
+} from '@/components/ui/dropdown-menu';
+import { AIRecommendation, ScheduleChange, Task } from '@/types';
+import { formatTime, formatDateShort } from '@/lib/utils';
 
 interface AIPlannerProps {
-  tasks: Task[]
-  onRecommendationAccept: (rec: AIRecommendation) => void
-  onRecommendationReject: (rec: AIRecommendation) => void
-  onApplyRecommendations: (recs: AIRecommendation[]) => void
-  recommendations: AIRecommendation[]
-  isProcessing: boolean
+  tasks: Task[];
+  events: any[];
+  energyForecast: any[];
+  onApplyRecommendations: (recIds: string[]) => void;
+  onDismissRecommendations: (recIds: string[]) => void;
 }
 
-const quickPrompts = [
-  "What should I work on next?",
-  "I'm feeling overwhelmed, help me prioritize",
-  "Reschedule my afternoon - unexpected meeting at 2pm",
-  "Plan tomorrow based on today's progress",
-  "I have low energy today, adjust my schedule",
-  "Help me batch similar tasks together",
-]
+const QUICK_PROMPTS = [
+  {
+    label: 'What should I work on next?',
+    prompt: 'What should I work on right now given my current energy and schedule?',
+  },
+  {
+    label: 'Plan my day',
+    prompt: 'Create an optimal schedule for today based on my tasks and energy levels',
+  },
+  {
+    label: "I'm feeling low energy",
+    prompt: 'My energy is low today. Adjust my schedule for low-energy work only.',
+  },
+  {
+    label: 'Unexpected meeting',
+    prompt: 'A 2-hour meeting just got added at 2pm. Rebalance my day.',
+  },
+  {
+    label: 'Brain dump',
+    prompt: 'I have these tasks: [list]. Help me prioritize and schedule them.',
+  },
+  {
+    label: 'Weekly planning',
+    prompt: 'Plan my week ahead based on current workload and deadlines.',
+  },
+];
 
-export function AIPlanner({
+const RECOMMENDATION_TYPE_ICONS: Record<
+  AIRecommendation['type'],
+  React.ComponentType<{ className?: string }>
+> = {
+  reschedule: Calendar,
+  prioritize: Target,
+  break: Coffee,
+  focus: Zap,
+  delegate: AlertTriangle,
+  defer: ChevronDown,
+};
+
+const RECOMMENDATION_TYPE_COLORS: Record<AIRecommendation['type'], string> = {
+  reschedule: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  prioritize: 'bg-purple-500/10 text-purple-400 border-purple-500/20',
+  break: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  focus: 'bg-green-500/10 text-green-400 border-green-500/20',
+  delegate: 'bg-red-500/10 text-red-400 border-red-500/20',
+  defer: 'bg-muted text-muted-foreground',
+};
+
+function RecommendationCard({
+  recommendation,
+  onAccept,
+  onReject,
+  onAdjust,
   tasks,
-  onRecommendationAccept,
-  onRecommendationReject,
-  onApplyRecommendations,
-  recommendations,
-  isProcessing,
-}: AIPlannerProps) {
-  const [input, setInput] = React.useState('')
-  const [chatHistory, setChatHistory] = React.useState<Array<{role: 'user' | 'assistant'; content: string; recommendations?: AIRecommendation[]}>>([
-    { role: 'assistant', content: "Hi! I'm your AI planner. I can help you prioritize tasks, reschedule your day, or answer questions about your schedule. What would you like to do?" }
-  ])
-  const [showRecommendations, setShowRecommendations] = React.useState(false)
-  const pendingRecs = recommendations.filter(r => r.status === 'pending')
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!input.trim() || isProcessing) return
-
-    const userMessage = input.trim()
-    setChatHistory(prev => [...prev, { role: 'user', content: userMessage }])
-    setInput('')
-
-    setTimeout(() => {
-      const response = generateAIResponse(userMessage, tasks)
-      setChatHistory(prev => [...prev, { role: 'assistant', ...response }])
-      if (response.recommendations) {
-        setShowRecommendations(true)
-      }
-    }, 800)
-  }
+}: {
+  recommendation: AIRecommendation;
+  onAccept: (id: string) => void;
+  onReject: (id: string) => void;
+  onAdjust: (id: string, changes: ScheduleChange[]) => void;
+  tasks: Task[];
+}) {
+  const Icon = RECOMMENDATION_TYPE_ICONS[recommendation.type];
+  const [expanded, setExpanded] = React.useState(false);
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-border/50 p-4">
-        <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
-            <Brain className="h-5 w-5 text-primary" aria-hidden="true" />
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={cn(
+        'glass rounded-xl p-4 border-l-4 transition-all',
+        recommendation.status === 'accepted' && 'border-green-500 bg-green-500/5',
+        recommendation.status === 'rejected' && 'border-red-500 bg-red-500/5 opacity-50',
+        recommendation.status === 'applied' && 'border-primary bg-primary/5',
+        recommendation.status === 'pending' && 'border-primary'
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={cn(
+            'flex h-10 w-10 items-center justify-center rounded-lg shrink-0',
+            RECOMMENDATION_TYPE_COLORS[recommendation.type]
+          )}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <h4 className="font-semibold">{recommendation.title}</h4>
+              <p className="text-sm text-muted-foreground mt-1">{recommendation.description}</p>
+            </div>
+            <div className="flex items-center gap-1">
+              <Badge
+                variant="outline"
+                className={cn(RECOMMENDATION_TYPE_COLORS[recommendation.type])}
+              >
+                {(recommendation.confidence * 100).toFixed(0)}% confidence
+              </Badge>
+            </div>
           </div>
-          <div>
-            <h2 className="font-heading text-lg font-semibold">AI Planner</h2>
-            <p className="text-sm text-muted-foreground">Ask me anything about your schedule</p>
+
+          <div className="mt-3 text-xs text-muted-foreground">
+            <Brain className="h-3 w-3 inline mr-1" />
+            {recommendation.reasoning}
+          </div>
+
+          {recommendation.proposedChanges.length > 0 && (
+            <div className="mt-3">
+              <button
+                onClick={() => setExpanded(!expanded)}
+                className="flex items-center gap-1 text-xs text-primary hover:underline"
+              >
+                <ChevronDown
+                  className={cn('h-3 w-3 transition-transform', expanded && 'rotate-180')}
+                />
+                View proposed changes ({recommendation.proposedChanges.length})
+              </button>
+              <AnimatePresence>
+                {expanded && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="mt-2 space-y-2"
+                  >
+                    {recommendation.proposedChanges.map((change, index) => {
+                      const task = tasks.find((t) => t.id === change.taskId);
+                      return (
+                        <div
+                          key={index}
+                          className="text-xs text-muted-foreground font-mono bg-muted/50 rounded p-2"
+                        >
+                          {change.type}: {task?.title || change.taskId}
+                          {change.from &&
+                            ` → ${formatTime(change.from.start)}-${formatTime(change.from.end)}`}
+                          {change.to &&
+                            ` → ${formatTime(change.to.start)}-${formatTime(change.to.end)}`}
+                        </div>
+                      );
+                    })}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 mt-4">
+            {recommendation.status === 'pending' && (
+              <>
+                <Button size="sm" onClick={() => onAccept(recommendation.id)} className="gap-1">
+                  <Check className="h-3 w-3" /> Accept
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onReject(recommendation.id)}
+                  className="gap-1"
+                >
+                  <X className="h-3 w-3" /> Dismiss
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onAdjust(recommendation.id, recommendation.proposedChanges)}
+                  className="gap-1"
+                >
+                  <Edit className="h-3 w-3" /> Adjust
+                </Button>
+              </>
+            )}
+            {recommendation.status === 'accepted' && (
+              <Badge variant="success">Accepted - Ready to apply</Badge>
+            )}
+            {recommendation.status === 'rejected' && <Badge variant="destructive">Dismissed</Badge>}
+            {recommendation.status === 'applied' && <Badge variant="default">Applied</Badge>}
           </div>
         </div>
       </div>
+    </motion.div>
+  );
+}
 
-      <div className="flex-1 overflow-hidden">
-        <ScrollArea className="h-full p-4">
-          <div className="space-y-4 max-w-2xl mx-auto">
-            {chatHistory.map((msg, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className={cn('flex gap-3', msg.role === 'user' && 'flex-row-reverse')}
-              >
-                <div className={cn(
-                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-                  msg.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-                )}>
-                  {msg.role === 'user' ? (
-                    <Zap className="h-4 w-4" aria-hidden="true" />
-                  ) : (
-                    <Brain className="h-4 w-4 text-primary" aria-hidden="true" />
-                  )}
+function ChatMessage({
+  role,
+  content,
+  recommendations = [],
+  onAccept,
+  onReject,
+  onAdjust,
+  tasks,
+}: {
+  role: 'user' | 'assistant';
+  content: string;
+  recommendations?: AIRecommendation[];
+  onAccept: (id: string) => void;
+  onReject: (id: string) => void;
+  onAdjust: (id: string, changes: ScheduleChange[]) => void;
+  tasks: Task[];
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={cn('flex gap-3', role === 'user' && 'flex-row-reverse')}
+    >
+      <div
+        className={cn(
+          'flex h-8 w-8 items-center justify-center rounded-full shrink-0',
+          role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
+        )}
+      >
+        {role === 'user' ? <Zap className="h-4 w-4" /> : <Brain className="h-4 w-4 text-primary" />}
+      </div>
+      <div className={cn('flex-1 max-w-2xl', role === 'user' && 'text-right')}>
+        <div
+          className={cn(
+            'rounded-2xl p-4',
+            role === 'user'
+              ? 'bg-primary text-primary-foreground rounded-tr-sm'
+              : 'glass rounded-tl-sm'
+          )}
+        >
+          <p className="whitespace-pre-wrap">{content}</p>
+        </div>
+        {recommendations.length > 0 && (
+          <div className="mt-3 space-y-2" role="list" aria-label="AI recommendations">
+            {recommendations.map((rec) => (
+              <RecommendationCard
+                key={rec.id}
+                recommendation={rec}
+                onAccept={onAccept}
+                onReject={onReject}
+                onAdjust={onAdjust}
+                tasks={tasks}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+export function AIPlanner({
+  tasks,
+  events,
+  energyForecast,
+  onApplyRecommendations,
+  onDismissRecommendations,
+}: AIPlannerProps) {
+  const [messages, setMessages] = React.useState<
+    Array<{
+      role: 'user' | 'assistant';
+      content: string;
+      recommendations?: AIRecommendation[];
+    }>
+  >([
+    {
+      role: 'assistant',
+      content:
+        "Hey! I'm your AI planner. I can help you prioritize tasks, rebalance your schedule, or plan your week. What would you like to do?",
+    },
+  ]);
+  const [input, setInput] = React.useState('');
+  const [isLoading, setIsLoading] = React.useState(false);
+  const [showQuickPrompts, setShowQuickPrompts] = React.useState(true);
+  const messagesEndRef = React.useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  React.useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  const handleAccept = (id: string) => {
+    setMessages((prev) =>
+      prev.map((msg) => ({
+        ...msg,
+        recommendations: msg.recommendations?.map((rec) =>
+          rec.id === id ? { ...rec, status: 'accepted' as const } : rec
+        ),
+      }))
+    );
+  };
+
+  const handleReject = (id: string) => {
+    setMessages((prev) =>
+      prev.map((msg) => ({
+        ...msg,
+        recommendations: msg.recommendations?.map((rec) =>
+          rec.id === id ? { ...rec, status: 'rejected' as const } : rec
+        ),
+      }))
+    );
+  };
+
+  const handleAdjust = (id: string, changes: ScheduleChange[]) => {
+    // In real app, this would open a modal to adjust changes
+    console.log('Adjust recommendation', id, changes);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!input.trim() || isLoading) return;
+
+    const userMessage = input.trim();
+    setInput('');
+    setShowQuickPrompts(false);
+
+    setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
+    setIsLoading(true);
+
+    // Simulate AI response
+    setTimeout(() => {
+      const mockResponse = generateMockResponse(userMessage, tasks);
+      setMessages((prev) => [...prev, mockResponse]);
+      setIsLoading(false);
+    }, 1500);
+  };
+
+  const handleQuickPrompt = (prompt: string) => {
+    setInput(prompt);
+    handleSubmit(new Event('submit') as any);
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="font-heading text-2xl font-semibold flex items-center gap-2">
+            <Sparkles className="h-6 w-6 text-primary" />
+            AI Planner
+          </h1>
+          <p className="text-muted-foreground">Chat with your scheduling assistant</p>
+        </div>
+        <Button variant="outline" size="sm">
+          <RefreshCw className="h-4 w-4 mr-2" />
+          New Chat
+        </Button>
+      </div>
+
+      {/* Quick Prompts */}
+      <AnimatePresence>
+        {showQuickPrompts && messages.length === 1 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="mb-6"
+          >
+            <Card className="glass">
+              <CardContent className="pt-0">
+                <div className="p-4">
+                  <p className="text-sm text-muted-foreground mb-3">Quick actions</p>
+                  <div className="flex flex-wrap gap-2">
+                    {QUICK_PROMPTS.map((qp) => (
+                      <Button
+                        key={qp.label}
+                        variant="outline"
+                        size="sm"
+                        onClick={() => handleQuickPrompt(qp.prompt)}
+                        className="whitespace-nowrap"
+                      >
+                        {qp.label}
+                      </Button>
+                    ))}
+                  </div>
                 </div>
-                <div className={cn(
-                  'max-w-[80%] rounded-2xl px-4 py-3',
-                  msg.role === 'user' 
-                    ? 'bg-primary text-primary-foreground rounded-tr-sm' 
-                    : 'bg-muted rounded-tl-sm'
-                )}>
-                  <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
-                  {msg.recommendations && msg.recommendations.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {msg.recommendations.map((rec) => (
-                        <RecommendationCard
-                          key={rec.id}
-                          recommendation={rec}
-                          onAccept={() => onRecommendationAccept(rec)}
-                          onReject={() => onRecommendationReject(rec)}
-                        />
-                      ))}
-                    </div>
-                  )}
+              </CardContent>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Chat History */}
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea className="h-full pr-2">
+          <div className="space-y-6 pb-4">
+            {messages.map((msg, index) => (
+              <ChatMessage
+                key={index}
+                role={msg.role}
+                content={msg.content}
+                recommendations={msg.recommendations || []}
+                onAccept={handleAccept}
+                onReject={handleReject}
+                onAdjust={handleAdjust}
+                tasks={tasks}
+              />
+            ))}
+            {isLoading && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-3">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-muted shrink-0">
+                  <Brain className="h-4 w-4 text-primary animate-pulse" />
+                </div>
+                <div className="glass rounded-2xl p-4 rounded-tl-sm">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    <span className="text-muted-foreground">Thinking...</span>
+                  </div>
                 </div>
               </motion.div>
-            ))}
+            )}
+            <div ref={messagesEndRef} />
           </div>
         </ScrollArea>
       </div>
 
-      <div className="border-t border-border/50 p-4">
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {quickPrompts.map((prompt) => (
-              <Button
-                key={prompt}
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setInput(prompt)
-                  handleSubmit(new Event('submit') as unknown as React.FormEvent)
-                }}
-                className="h-8 text-xs"
-              >
-                {prompt}
-              </Button>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <CustomTextarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask me to reschedule, prioritize, or explain your day..."
-              className="flex-1 min-h-[60px] max-h-[120px] resize-none"
-              disabled={isProcessing}
-              aria-label="Ask AI planner"
-            />
-            <Button
-              type="submit"
-              size="lg"
-              disabled={!input.trim() || isProcessing}
-              className="h-[60px]"
-            >
-              {isProcessing ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
-            </Button>
-          </div>
-
-          {pendingRecs.length > 0 && (
-            <div className="flex items-center justify-between rounded-lg bg-primary/5 border border-primary/10 p-3">
-              <div className="flex items-center gap-2 text-sm">
-                <Zap className="h-4 w-4 text-primary" aria-hidden="true" />
-                <span>{pendingRecs.length} pending recommendation{pendingRecs.length > 1 ? 's' : ''}</span>
-              </div>
-              <Button variant="premium" size="sm" onClick={() => onApplyRecommendations(pendingRecs)}>
-                Apply All
-              </Button>
-            </div>
-          )}
-        </form>
-      </div>
-    </div>
-  )
-}
-
-function RecommendationCard({ recommendation, onAccept, onReject }: { recommendation: AIRecommendation; onAccept: () => void; onReject: () => void }) {
-  const typeIcons = {
-    reschedule: Clock,
-    prioritize: Zap,
-    break: Calendar,
-    focus: Brain,
-    delegate: AlertCircle,
-    defer: RotateCcw,
-  }
-  const Icon = typeIcons[recommendation.type] || Zap
-
-  return (
-    <Card className="glass border-primary/20">
-      <CardContent className="pt-3 pb-3 pr-3 pl-3">
-        <div className="flex items-start gap-3">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-            <Icon className="h-4 w-4 text-primary" aria-hidden="true" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center justify-between">
-              <h4 className="font-medium">{recommendation.title}</h4>
-              <span className="text-xs text-muted-foreground">{Math.round(recommendation.confidence * 100)}% confidence</span>
-            </div>
-            <p className="text-sm text-muted-foreground mt-1">{recommendation.description}</p>
-            <p className="text-xs text-primary/80 mt-2">{recommendation.reasoning}</p>
-            <div className="flex items-center gap-2 mt-3">
-              <Button size="sm" variant="premium" onClick={onAccept}>
-                <CheckCircle className="h-3 w-3 mr-1" aria-hidden="true" />
-                Accept
-              </Button>
-              <Button size="sm" variant="outline" onClick={onReject}>
-                <XCircle className="h-3 w-3 mr-1" aria-hidden="true" />
-                Reject
-              </Button>
-            </div>
-          </div>
+      {/* Input */}
+      <form onSubmit={handleSubmit} className="border-t border-border/50 pt-4">
+        <div className="flex items-end gap-3">
+          <Textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Ask me to plan your day, prioritize tasks, or handle schedule changes..."
+            className="flex-1 min-h-[50px] max-h-32 resize-none"
+            rows={1}
+            disabled={isLoading}
+          />
+          <Button
+            type="submit"
+            size="lg"
+            disabled={!input.trim() || isLoading}
+            className="h-12 shrink-0"
+          >
+            {isLoading ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Send className="h-5 w-5" />
+            )}
+          </Button>
         </div>
-      </CardContent>
-    </Card>
-  )
+        <p className="text-xs text-muted-foreground mt-2 text-center">
+          Try: "Rebalance my day for low energy" or "What's my highest priority task?"
+        </p>
+      </form>
+    </div>
+  );
 }
 
-interface CustomTextareaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {}
+function generateMockResponse(prompt: string, tasks: Task[]) {
+  const lowerPrompt = prompt.toLowerCase();
 
-const CustomTextarea = React.forwardRef<HTMLTextAreaElement, CustomTextareaProps>(
-  ({ className, ...props }, ref) => (
-    <textarea
-      ref={ref}
-      className={cn(
-        'flex min-h-[80px] w-full rounded-lg border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50',
-        className
-      )}
-      {...props}
-    />
-  )
-)
-CustomTextarea.displayName = 'CustomTextarea'
-
-function generateAIResponse(input: string, tasks: Task[]) {
-  const lower = input.toLowerCase()
-  
-  if (lower.includes('what should i work on') || lower.includes('next')) {
-    const nextTask = tasks.filter(t => t.status === 'today' || t.status === 'inbox').sort((a, b) => b.aiPriorityScore - a.aiPriorityScore)[0]
+  if (lowerPrompt.includes('next') || lowerPrompt.includes('priority')) {
+    const topTask = tasks
+      .filter((t) => t.status === 'today' || t.status === 'inbox')
+      .sort((a, b) => b.aiPriorityScore - a.aiPriorityScore)[0];
     return {
-      content: `Based on your priorities and energy, I recommend: **"${nextTask?.title || 'Review your inbox'}"** (AI Score: ${nextTask?.aiPriorityScore || 'N/A'}%). This aligns with your peak energy window and has the highest impact.`,
-      recommendations: nextTask ? [{
-        id: `rec-${Date.now()}`,
-        type: 'prioritize',
-        title: `Focus on "${nextTask.title}"`,
-        description: 'Highest priority task for your current energy level',
-        reasoning: 'Matches peak energy window, high impact score, and imminent deadline',
-        confidence: 0.92,
-        affectedTasks: [nextTask.id],
-        proposedChanges: [],
-        status: 'pending',
-      }] : undefined
-    }
+      role: 'assistant' as const,
+      content: topTask
+        ? `Based on your current schedule and energy, I recommend **"${topTask.title}"** (AI priority: ${topTask.aiPriorityScore}%). It's due ${topTask.dueDate ? formatDateShort(topTask.dueDate) : 'soon'} and needs ${Math.round(topTask.estimatedEffort / 60)}h.`
+        : 'You have no pending tasks. Great job! Want to plan tomorrow?',
+      recommendations: topTask
+        ? [
+            {
+              id: `rec-${Date.now()}`,
+              type: 'prioritize' as const,
+              title: `Focus on "${topTask.title}"`,
+              description: 'Highest AI priority score, fits your current energy window',
+              reasoning:
+                'This task has the highest impact-to-effort ratio and aligns with your peak energy hours.',
+              confidence: 0.92,
+              affectedTasks: [topTask.id],
+              proposedChanges: [],
+              status: 'pending' as const,
+            },
+          ]
+        : [],
+    };
   }
 
-  if (lower.includes('overwhelmed') || lower.includes('prioritize')) {
+  if (lowerPrompt.includes('plan') || lowerPrompt.includes('schedule')) {
     return {
-      content: "I see you have several competing priorities. Let me help you focus on what matters most right now. Your top 3 tasks by AI priority score are:\n\n1. **Prepare marketing presentation** (94%) - Due Friday, high impact\n2. **Client call prep - Beta Corp** (98%) - Critical, before 4pm call\n3. **Code review for PR #247** (87%) - Blocking team deployment\n\nWould you like me to reschedule anything or create a focused 3-task day?",
+      role: 'assistant' as const,
+      content:
+        "I've analyzed your tasks and energy forecast. Here's my proposed schedule:\n\n• 9:00-11:00: Deep work on highest priority task\n• 11:00-11:15: Break\n• 11:15-12:30: Medium priority tasks\n• 12:30-13:30: Lunch\n• 13:30-15:00: Meetings/calls\n• 15:00-15:15: Recovery break\n• 15:15-17:00: Flexible/low energy work",
       recommendations: [
         {
           id: `rec-${Date.now()}`,
-          type: 'prioritize',
-          title: 'Focus on top 3 only',
-          description: 'Hide lower priority tasks until top 3 are done',
-          reasoning: 'Reduces decision fatigue, increases completion rate by ~40%',
-          confidence: 0.88,
-          affectedTasks: ['task-1', 'task-2', 'task-5'],
+          type: 'reschedule' as const,
+          title: "Optimize today's schedule",
+          description: 'Move deep work to 9-11am peak energy window',
+          reasoning: 'Your energy forecast shows 95% capacity at 9-11am vs 45% at 2pm.',
+          confidence: 0.89,
+          affectedTasks: tasks
+            .filter((t) => t.status === 'today')
+            .slice(0, 3)
+            .map((t) => t.id),
           proposedChanges: [],
-          status: 'pending',
-        }
-      ]
-    }
+          status: 'pending' as const,
+        },
+        {
+          id: `rec-${Date.now() + 1}`,
+          type: 'break' as const,
+          title: 'Add recovery breaks',
+          description: '15-min breaks after each 90-min focus block',
+          reasoning:
+            'Research shows 90-min ultradian rhythms require recovery for sustained performance.',
+          confidence: 0.94,
+          affectedTasks: [],
+          proposedChanges: [],
+          status: 'pending' as const,
+        },
+      ],
+    };
   }
 
-  if (lower.includes('reschedule') || lower.includes('meeting')) {
+  if (lowerPrompt.includes('low energy') || lowerPrompt.includes('tired')) {
     return {
-      content: "I can help reschedule your afternoon. With a 2pm meeting, I'd suggest:\n\n• Move **Code Review** to 11:45am (your balanced energy window)\n• Shift **Marketing Presentation** to 9:30-11:30am (deep work block)\n• Add 15min recovery break after 2pm meeting\n• Keep **Client Call Prep** at 3:30pm (needs high energy)\n\nThis preserves 3.5h of focused work time.",
+      role: 'assistant' as const,
+      content:
+        "Low energy detected. I'll shift your schedule to low-effort, high-impact work only:\n\n• Move all deep work to tomorrow\n• Keep only: admin, email, review tasks\n• Add 20-min walk after lunch\n• Suggest 20-min power nap at 2pm",
       recommendations: [
         {
           id: `rec-${Date.now()}`,
-          type: 'reschedule',
-          title: 'Reschedule for 2pm meeting',
-          description: 'Move code review earlier, protect deep work block',
-          reasoning: 'Energy forecast shows 30% drop at 2pm. Code review needs sustained attention.',
-          confidence: 0.87,
-          affectedTasks: ['task-2'],
-          proposedChanges: [{
-            taskId: 'task-2',
-            type: 'move',
-            from: { start: new Date('2024-01-25T14:00:00'), end: new Date('2024-01-25T14:45:00') },
-            to: { start: new Date('2024-01-25T11:45:00'), end: new Date('2024-01-25T12:30:00') }
-          }],
-          status: 'pending',
-        }
-      ]
-    }
+          type: 'defer' as const,
+          title: 'Defer high-energy tasks',
+          description: 'Move deep work tasks to tomorrow morning',
+          reasoning:
+            "Your current energy level won't support quality deep work. Better to delay than produce subpar output.",
+          confidence: 0.88,
+          affectedTasks: tasks.filter((t) => t.energyRequired === 'high').map((t) => t.id),
+          proposedChanges: [],
+          status: 'pending' as const,
+        },
+      ],
+    };
   }
 
   return {
-    content: "I'm here to help with your schedule! You can ask me things like:\n• \"What should I work on next?\"\n• \"Reschedule my afternoon - meeting at 2pm\"\n• \"I have low energy today, adjust my schedule\"\n• \"Plan tomorrow based on today's progress\"\n\nWhat would you like to do?"
-  }
+    role: 'assistant' as const,
+    content:
+      'I understand. Let me analyze your situation and provide tailored recommendations. Could you share more details about your current tasks and constraints?',
+    recommendations: [],
+  };
 }

@@ -1,4 +1,12 @@
-import { Task, CalendarEvent, EnergyForecast, DaySchedule, InsightData, AIRecommendation, UserProfile } from '@/types'
+import {
+  Task,
+  CalendarEvent,
+  EnergyForecast,
+  DaySchedule,
+  InsightData,
+  AIRecommendation,
+  UserProfile,
+} from '@/types';
 
 export const demoUser: UserProfile = {
   id: 'user-1',
@@ -11,7 +19,11 @@ export const demoUser: UserProfile = {
   calendarConnected: true,
   theme: 'dark',
   reducedMotion: false,
-}
+  notificationIntensity: 'balanced',
+  planningHorizon: 'week',
+  aiAggressiveness: 'balanced',
+  energyWeight: 50,
+};
 
 export const demoTasks: Task[] = [
   {
@@ -31,7 +43,8 @@ export const demoTasks: Task[] = [
     scheduledAt: new Date('2024-01-25T09:00:00'),
     createdAt: new Date('2024-01-20'),
     updatedAt: new Date('2024-01-24'),
-    aiReasoning: 'High impact, deadline in 2 days, requires peak energy. Scheduled during your morning focus window.',
+    aiReasoning:
+      'High impact, deadline in 2 days, requires peak energy. Scheduled during your morning focus window.',
     tags: ['presentation', 'client', 'deadline'],
   },
   {
@@ -170,7 +183,7 @@ export const demoTasks: Task[] = [
     aiReasoning: 'High long-term impact but no urgency. Schedule during deep work week.',
     tags: ['design-system', 'audit', 'architecture'],
   },
-]
+];
 
 export const demoEvents: CalendarEvent[] = [
   {
@@ -240,7 +253,7 @@ export const demoEvents: CalendarEvent[] = [
     type: 'meeting',
     color: '#06b6d4',
   },
-]
+];
 
 export const demoEnergyForecast: EnergyForecast[] = [
   { hour: 6, level: 'low', confidence: 0.8 },
@@ -261,16 +274,16 @@ export const demoEnergyForecast: EnergyForecast[] = [
   { hour: 21, level: 'low', confidence: 0.9 },
   { hour: 22, level: 'low', confidence: 0.9 },
   { hour: 23, level: 'low', confidence: 0.9 },
-]
+];
 
 export const demoDaySchedule: DaySchedule = {
   date: new Date('2024-01-25'),
   events: demoEvents,
-  tasks: demoTasks.filter(t => t.status === 'today'),
+  tasks: demoTasks.filter((t) => t.status === 'today'),
   energyForecast: demoEnergyForecast,
   focusTimePlanned: 210,
   focusTimeCompleted: 0,
-}
+};
 
 export const demoInsights: InsightData = {
   plannedVsCompleted: [
@@ -311,26 +324,34 @@ export const demoInsights: InsightData = {
     { category: 'Breaks', hours: 10 },
   ],
   burnoutRisk: 'medium',
-  weeklyReflection: 'This week showed strong morning productivity but significant afternoon energy drops. Consider scheduling all high-impact work before 1pm and protecting that time aggressively. Three tasks rolled over - all were low-energy admin items that could be batched.',
+  weeklyReflection:
+    'This week showed strong morning productivity but significant afternoon energy drops. Consider scheduling all high-impact work before 1pm and protecting that time aggressively. Three tasks rolled over - all were low-energy admin items that could be batched.',
   recommendations: [
     'Move all critical work to 9-11am window',
     'Batch admin tasks for Friday afternoon',
     'Add 15-min buffer between meetings',
     'Schedule 20-min walk after lunch to reset energy',
   ],
-}
+};
 
 export const demoRecommendations: AIRecommendation[] = [
   {
     id: 'rec-1',
     type: 'reschedule',
     title: 'Move "Code Review" earlier',
-    description: 'Your energy forecast shows a dip at 2pm. Moving this to 11:45am aligns with your balanced energy window.',
-    reasoning: 'Energy forecast predicts 30% drop at 14:00. Code review requires sustained attention.',
+    description:
+      'Your energy forecast shows a dip at 2pm. Moving this to 11:45am aligns with your balanced energy window.',
+    reasoning:
+      'Energy forecast predicts 30% drop at 14:00. Code review requires sustained attention.',
     confidence: 0.87,
     affectedTasks: ['task-2'],
     proposedChanges: [
-      { taskId: 'task-2', type: 'move', from: { start: new Date('2024-01-25T14:00:00'), end: new Date('2024-01-25T14:45:00') }, to: { start: new Date('2024-01-25T11:45:00'), end: new Date('2024-01-25T12:30:00') } },
+      {
+        taskId: 'task-2',
+        type: 'move',
+        from: { start: new Date('2024-01-25T14:00:00'), end: new Date('2024-01-25T14:45:00') },
+        to: { start: new Date('2024-01-25T11:45:00'), end: new Date('2024-01-25T12:30:00') },
+      },
     ],
     status: 'pending',
   },
@@ -338,12 +359,18 @@ export const demoRecommendations: AIRecommendation[] = [
     id: 'rec-2',
     type: 'break',
     title: 'Add recovery break after client call',
-    description: 'High-stress meeting at 3:30pm. A 15-min walk will prevent decision fatigue for evening work.',
-    reasoning: 'Client calls spike cortisol. Recovery breaks improve subsequent focus quality by 23%.',
+    description:
+      'High-stress meeting at 3:30pm. A 15-min walk will prevent decision fatigue for evening work.',
+    reasoning:
+      'Client calls spike cortisol. Recovery breaks improve subsequent focus quality by 23%.',
     confidence: 0.92,
     affectedTasks: [],
     proposedChanges: [
-      { taskId: 'break-1', type: 'move', to: { start: new Date('2024-01-25T16:15:00'), end: new Date('2024-01-25T16:30:00') } },
+      {
+        taskId: 'break-1',
+        type: 'move',
+        to: { start: new Date('2024-01-25T16:15:00'), end: new Date('2024-01-25T16:30:00') },
+      },
     ],
     status: 'pending',
   },
@@ -356,15 +383,19 @@ export const demoRecommendations: AIRecommendation[] = [
     confidence: 0.78,
     affectedTasks: ['task-7'],
     proposedChanges: [
-      { taskId: 'task-7', type: 'move', to: { start: new Date('2024-01-26T14:00:00'), end: new Date('2024-01-26T15:00:00') } },
+      {
+        taskId: 'task-7',
+        type: 'move',
+        to: { start: new Date('2024-01-26T14:00:00'), end: new Date('2024-01-26T15:00:00') },
+      },
     ],
     status: 'pending',
   },
-]
+];
 
 export const projects = [
   { id: 'proj-1', name: 'Client Alpha', color: '#06b6d4' },
   { id: 'proj-2', name: 'Platform Core', color: '#f59e0b' },
   { id: 'proj-3', name: 'Personal Brand', color: '#8b5cf6' },
   { id: 'proj-4', name: 'Admin', color: '#64748b' },
-]
+];
