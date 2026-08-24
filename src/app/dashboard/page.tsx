@@ -61,6 +61,27 @@ export default function DashboardPage() {
   const totalMinutes = tasks.reduce((sum, t) => sum + t.estimatedEffort, 0);
   const plannedLabel = `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
 
+  // Real deadlines only — tasks without due dates are never fabricated onto the timeline.
+  const upcomingDeadlines = openTasks
+    .filter((t) => t.dueDate instanceof Date && !Number.isNaN(t.dueDate.getTime()))
+    .sort((a, b) => (a.dueDate as Date).getTime() - (b.dueDate as Date).getTime())
+    .slice(0, 10);
+
+  function formatDeadline(d: Date): string {
+    const local = new Date(d.getTime());
+    const now = new Date();
+    const sameDay = local.toDateString() === now.toDateString();
+    if (sameDay) {
+      return `Today ${local.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    }
+    return local.toLocaleString([], {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
   const focusTimePlanned = totalMinutes;
   const focusTimeCompleted = Math.round((completedCount / (tasks.length || 1)) * 100);
 
@@ -328,79 +349,79 @@ export default function DashboardPage() {
             <CardHeader className="pb-3">
               <CardTitle className="flex items-center gap-2">
                 <Clock className="h-5 w-5 text-primary" />
-                Smart Timeline
+                Upcoming Deadlines
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              <div className="space-y-2 max-h-96 overflow-y-auto">
-                {[
-                  { time: '9:00-9:15', title: 'Daily Standup', type: 'meeting', color: '#3B82F6' },
-                  {
-                    time: '9:30-11:30',
-                    title: 'Deep Work: Marketing Presentation',
-                    type: 'focus',
-                    color: '#00F0FF',
-                  },
-                  { time: '11:30-11:45', title: 'Break / Walk', type: 'break', color: '#10B981' },
-                  {
-                    time: '11:45-12:30',
-                    title: 'Code Review Session',
-                    type: 'focus',
-                    color: '#00F0FF',
-                  },
-                  { time: '12:30-13:30', title: 'Lunch Break', type: 'break', color: '#10B981' },
-                  {
-                    time: '15:30-16:15',
-                    title: 'Client Call - Beta Corp',
-                    type: 'meeting',
-                    color: '#EF4444',
-                  },
-                ].map((event, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-3 p-3 rounded-xl hover:bg-accent/50 transition-colors group"
-                  >
-                    <div className="w-20 text-xs font-mono text-muted-foreground shrink-0">
-                      {event.time}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-medium text-sm truncate">{event.title}</p>
-                      <div className="flex items-center gap-2 mt-1">
-                        <span
-                          className={cn(
-                            'text-xs px-2 py-0.5 rounded-full',
-                            event.type === 'meeting' && 'bg-blue-500/10 text-blue-400',
-                            event.type === 'focus' && 'bg-cyan-500/10 text-cyan-400',
-                            event.type === 'break' && 'bg-green-500/10 text-green-400'
-                          )}
+              {isLoading ? (
+                <div className="space-y-2 py-2" aria-busy="true">
+                  {[0, 1, 2].map((i) => (
+                    <Skeleton key={i} className="h-14 w-full rounded-xl" />
+                  ))}
+                </div>
+              ) : upcomingDeadlines.length === 0 ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  No upcoming deadlines. Tasks with due dates will appear here.
+                </div>
+              ) : (
+                <div
+                  className="space-y-2 max-h-96 overflow-y-auto"
+                  role="list"
+                  aria-label="Upcoming deadlines"
+                >
+                  {upcomingDeadlines.map((task) => {
+                    const overdue =
+                      task.dueDate && task.dueDate < new Date() && task.status !== 'completed';
+                    return (
+                      <div
+                        key={task.id}
+                        role="listitem"
+                        className="flex items-center gap-3 p-3 rounded-xl hover:bg-accent/50 transition-colors group"
+                      >
+                        <div className="w-24 text-xs font-mono text-muted-foreground shrink-0">
+                          {formatDeadline(task.dueDate as Date)}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{task.title}</p>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span
+                              className={cn(
+                                'text-xs px-2 py-0.5 rounded-full capitalize',
+                                task.priority === 'critical' && 'bg-red-500/10 text-red-400',
+                                task.priority === 'high' && 'bg-orange-500/10 text-orange-400',
+                                task.priority === 'medium' && 'bg-blue-500/10 text-blue-400',
+                                task.priority === 'low' && 'bg-muted text-muted-foreground'
+                              )}
+                            >
+                              {task.priority}
+                            </span>
+                            {overdue && (
+                              <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-400">
+                                Overdue
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                          aria-label={`Start focus on ${task.title}`}
+                          onClick={() =>
+                            openFocusMode({
+                              id: task.id,
+                              title: task.title,
+                              estimatedMinutes: task.estimatedEffort,
+                            })
+                          }
                         >
-                          {event.type.charAt(0).toUpperCase() + event.type.slice(1)}
-                        </span>
-                        {event.type === 'focus' && (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={() =>
-                              openFocusMode({
-                                id: `focus-${i}`,
-                                title: event.title,
-                                estimatedMinutes: 60,
-                              })
-                            }
-                          >
-                            <Zap className="h-3 w-3" />
-                          </Button>
-                        )}
+                          <Zap className="h-3 w-3" aria-hidden="true" />
+                        </Button>
                       </div>
-                    </div>
-                    <div
-                      className="w-3 h-3 rounded-full shrink-0"
-                      style={{ backgroundColor: event.color }}
-                    />
-                  </div>
-                ))}
-              </div>
+                    );
+                  })}
+                </div>
+              )}
             </CardContent>
           </Card>
 

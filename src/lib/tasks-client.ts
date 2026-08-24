@@ -1,4 +1,4 @@
-import type { Task, TaskStatus, TaskPriority, EnergyLevel } from '@/types';
+import type { Task, TaskStatus, TaskPriority, EnergyLevel, CalendarEvent } from '@/types';
 
 interface ApiTaskRow {
   id: string;
@@ -116,4 +116,63 @@ export async function updateTask(id: string, patch: UpdateTaskInput): Promise<Ta
 export async function deleteTask(id: string): Promise<void> {
   const res = await fetch(`/api/tasks/${id}?confirm=true`, { method: 'DELETE' });
   if (!res.ok) throw new TasksApiError(res.status, await parseError(res));
+}
+
+interface ApiCalendarEventRow {
+  id: string;
+  title: string;
+  description?: string | null;
+  startUtc: string;
+  endUtc: string;
+  isAllDay?: boolean | null;
+  color?: string | null;
+  location?: string | null;
+  source?: string | null;
+}
+
+export async function fetchCalendarEvents(start: Date, end: Date): Promise<CalendarEvent[]> {
+  const params = new URLSearchParams({
+    start: start.toISOString(),
+    end: end.toISOString(),
+    view: 'week',
+  });
+  const res = await fetch(`/api/calendar?${params.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new TasksApiError(res.status, await parseError(res));
+  const data = await res.json();
+  return ((data.events ?? []) as ApiCalendarEventRow[]).map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description ?? undefined,
+    // UTC instants rendered via local Date — consistent conversion at the boundary only.
+    start: new Date(row.startUtc),
+    end: new Date(row.endUtc),
+    type: 'focus' as const,
+    color: row.color ?? '#8B5CF6',
+    isAllDay: row.isAllDay ?? false,
+    location: row.location ?? undefined,
+  }));
+}
+
+/**
+ * Display-only mapping of task deadlines onto the calendar. This does NOT
+ * schedule anything — a task with no deadline simply produces no entry.
+ */
+export function tasksAsDeadlineEvents(tasks: Task[]): CalendarEvent[] {
+  return tasks
+    .filter((t) => t.dueDate instanceof Date && !Number.isNaN(t.dueDate.getTime()))
+    .map((t) => {
+      const start = t.dueDate as Date;
+      const end = new Date(start.getTime() + Math.max(t.estimatedEffort, 15) * 60 * 1000);
+      return {
+        id: `task-deadline-${t.id}`,
+        title: `⏰ ${t.title}`,
+        start,
+        end,
+        type: 'focus' as const,
+        color:
+          t.priority === 'critical' ? '#EF4444' : t.priority === 'high' ? '#F59E0B' : '#3B82F6',
+        taskId: t.id,
+        isAllDay: false,
+      };
+    });
 }
