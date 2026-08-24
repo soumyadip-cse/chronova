@@ -117,9 +117,16 @@ interface SortableTaskCardProps {
   isSelected: boolean;
   onSelect: (taskId: string, selected: boolean) => void;
   onClick: (task: Task) => void;
+  onDelete?: (taskId: string) => void;
 }
 
-function SortableTaskCard({ task, isSelected, onSelect, onClick }: SortableTaskCardProps) {
+function SortableTaskCard({
+  task,
+  isSelected,
+  onSelect,
+  onClick,
+  onDelete,
+}: SortableTaskCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: task.id,
   });
@@ -188,7 +195,7 @@ function SortableTaskCard({ task, isSelected, onSelect, onClick }: SortableTaskC
                   <Copy className="h-4 w-4 mr-2" /> Duplicate
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem className="text-destructive" onClick={() => {}}>
+                <DropdownMenuItem className="text-destructive" onClick={() => onDelete?.(task.id)}>
                   <Trash2 className="h-4 w-4 mr-2" /> Delete
                 </DropdownMenuItem>
               </DropdownMenuContent>
@@ -270,12 +277,14 @@ function TaskList({
   selectedIds,
   onSelect,
   onClick,
+  onDelete,
   filterStatus,
 }: {
   tasks: Task[];
   selectedIds: string[];
   onSelect: (taskId: string, selected: boolean) => void;
   onClick: (task: Task) => void;
+  onDelete?: (taskId: string) => void;
   filterStatus: FilterStatus;
 }) {
   const filteredTasks = tasks.filter((t) =>
@@ -331,6 +340,7 @@ function TaskList({
                   isSelected={selectedIds.includes(task.id)}
                   onSelect={onSelect}
                   onClick={onClick}
+                  onDelete={onDelete}
                 />
               </motion.div>
             ))}
@@ -644,6 +654,7 @@ export function TaskInbox({
                 selectedIds={selectedIds}
                 onSelect={handleSelect}
                 onClick={onTaskClick}
+                onDelete={onTaskDelete}
                 filterStatus={filterStatus}
               />
             </div>

@@ -128,13 +128,17 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     null
   );
 
-  const updateData = {
+  const updateData: Record<string, unknown> = {
     ...parsed.data,
     priorityScore: score,
     scoreExplanation: explanation,
     updatedAt: now,
-    deadlineUtc: parsed.data.deadlineUtc ? new Date(parsed.data.deadlineUtc) : null,
   };
+  // Only touch the deadline when the client explicitly sent one, so partial
+  // updates never wipe an existing deadline.
+  if ('deadlineUtc' in parsed.data) {
+    updateData.deadlineUtc = parsed.data.deadlineUtc ? new Date(parsed.data.deadlineUtc) : null;
+  }
 
   const [updated] = await db
     .update(tasks)
