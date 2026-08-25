@@ -93,24 +93,39 @@ export async function POST(request: NextRequest) {
 
   const now = new Date();
 
+  // Ownership hardening: never attach a schedule block the caller does not
+  // own. A foreign (or unknown) block id is stripped; the session itself is
+  // still recorded per existing semantics.
+  let ownedScheduleBlockId: string | null | undefined = parsed.data.scheduleBlockId;
+  if (ownedScheduleBlockId) {
+    const owned = await db
+      .select({ id: scheduleBlocks.id })
+      .from(scheduleBlocks)
+      .where(
+        and(eq(scheduleBlocks.id, ownedScheduleBlockId), eq(scheduleBlocks.userId, session.user.id))
+      )
+      .limit(1);
+    if (!owned[0]) {
+      ownedScheduleBlockId = null;
+    }
+  }
+
   const [sessionRecord] = await db
     .insert(focusSessions)
     .values({
       userId: session.user.id,
       ...parsed.data,
+      scheduleBlockId: ownedScheduleBlockId ?? null,
       completedAtUtc: now,
     })
     .returning();
 
-  if (parsed.data.scheduleBlockId) {
+  if (ownedScheduleBlockId) {
     await db
       .update(scheduleBlocks)
       .set({ isCompleted: true })
       .where(
-        and(
-          eq(scheduleBlocks.id, parsed.data.scheduleBlockId),
-          eq(scheduleBlocks.userId, session.user.id)
-        )
+        and(eq(scheduleBlocks.id, ownedScheduleBlockId), eq(scheduleBlocks.userId, session.user.id))
       );
   }
 

@@ -18,14 +18,26 @@ let insertedSession: Record<string, unknown> | null = null;
 const blockUpdates: Array<{ set: Record<string, unknown> }> = [];
 const taskUpdates: Array<{ set: Record<string, unknown> }> = [];
 
+// Result of the ownership lookup for scheduleBlocks; tests configure it to
+// simulate a block that does or does not belong to the session user.
+let ownershipLookup: unknown[] = [];
+
 vi.mock('@/db', () => ({
   db: {
     select: () => ({
-      from: (table: unknown) => ({
-        where: async () => [],
-        orderBy: async () => [],
-        limit: async () => [],
-      }),
+      from: (table: unknown) => {
+        const rows = () => (table === scheduleBlocks ? ownershipLookup : []);
+        return {
+          // Awaitable directly, or chainable into .limit(1) as the route does.
+          where: () => ({
+            limit: async () => rows(),
+            then: (resolve: (v: unknown[]) => void, reject?: (e: unknown) => void) =>
+              Promise.resolve(rows()).then(resolve, reject),
+          }),
+          orderBy: async () => rows(),
+          limit: async () => rows(),
+        };
+      },
     }),
     insert: (table: unknown) => ({
       values: (vals: unknown) => ({
@@ -78,6 +90,7 @@ beforeEach(() => {
   insertedSession = null;
   blockUpdates.length = 0;
   taskUpdates.length = 0;
+  ownershipLookup = [];
 });
 
 describe('POST /api/focus', () => {
@@ -132,6 +145,7 @@ describe('POST /api/focus', () => {
   it('marks the associated schedule block completed when provided', async () => {
     getSessionMock.mockResolvedValueOnce(authenticatedSession);
     const blockId = '66666666-6666-6666-6666-666666666666';
+    ownershipLookup = [{ id: blockId }]; // lookup confirms the caller owns it
 
     const response = await POST(
       buildRequest({ taskId: null, scheduleBlockId: blockId, durationMinutes: 25 })
@@ -139,6 +153,24 @@ describe('POST /api/focus', () => {
     expect(response.status).toBe(201);
     expect(blockUpdates).toHaveLength(1);
     expect(blockUpdates[0].set).toMatchObject({ isCompleted: true });
+  });
+
+  it('strips a foreign scheduleBlockId and never completes another user block', async () => {
+    getSessionMock.mockResolvedValueOnce(authenticatedSession);
+    const foreignBlockId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+
+    // Ownership lookup finds nothing for this caller.
+    const response = await POST(
+      buildRequest({ taskId: null, scheduleBlockId: foreignBlockId, durationMinutes: 25 })
+    );
+    expect(response.status).toBe(201);
+
+    // The session row is still recorded, but without the foreign reference.
+    expect(insertedSession).not.toBeNull();
+    expect(insertedSession!.scheduleBlockId ?? null).toBeNull();
+
+    // No completion write may target a block at all.
+    expect(blockUpdates).toHaveLength(0);
   });
 
   it('marks the associated task completed when provided', async () => {

@@ -52,8 +52,16 @@ import { useTheme } from 'next-themes';
 
 interface SettingsProps {
   user: UserProfile;
-  onSave: (settings: Partial<UserProfile>) => void;
+  onSave: (settings: Partial<UserProfile>) => Promise<void> | void;
+  /** Streams a full account data export download. */
+  onExportData?: () => Promise<void>;
+  /** Deletes the account permanently; requires typed confirmation. */
+  onDeleteAccount?: (confirmation: string) => Promise<void>;
+  /** Called after successful deletion so the host can end the session. */
+  onAccountDeleted?: () => void;
 }
+
+const DELETE_CONFIRMATION_PHRASE = 'DELETE MY ACCOUNT';
 
 const ROLE_OPTIONS = [
   {
@@ -97,12 +105,27 @@ const CHALLENGES = [
   'Unclear priorities',
 ];
 
-export function SettingsPanel({ user, onSave }: SettingsProps) {
+export function SettingsPanel({
+  user,
+  onSave,
+  onExportData,
+  onDeleteAccount,
+  onAccountDeleted,
+}: SettingsProps) {
   const { theme, setTheme, resolvedTheme } = useTheme();
   const [saving, setSaving] = React.useState(false);
   const [saved, setSaved] = React.useState(false);
+  const [saveError, setSaveError] = React.useState<string | null>(null);
   const [formData, setFormData] = React.useState<Record<string, any>>({});
   const [activeTab, setActiveTab] = React.useState('appearance');
+
+  // Data & privacy state
+  const [exporting, setExporting] = React.useState(false);
+  const [exportMessage, setExportMessage] = React.useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = React.useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = React.useState('');
+  const [deleting, setDeleting] = React.useState(false);
+  const [deleteError, setDeleteError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setFormData({
@@ -123,11 +146,46 @@ export function SettingsPanel({ user, onSave }: SettingsProps) {
 
   const handleSave = async () => {
     setSaving(true);
-    await new Promise((r) => setTimeout(r, 1000)); // Simulate API call
-    onSave(formData);
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    setSaveError(null);
+    try {
+      await onSave(formData);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 3000);
+    } catch (error) {
+      setSaveError(
+        error instanceof Error ? error.message : 'Unable to save your settings. Please try again.'
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleExport = async () => {
+    if (!onExportData) return;
+    setExporting(true);
+    setExportMessage(null);
+    try {
+      await onExportData();
+      setExportMessage('Export downloaded.');
+      setTimeout(() => setExportMessage(null), 4000);
+    } catch (error) {
+      setExportMessage(error instanceof Error ? error.message : 'Export failed. Please try again.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!onDeleteAccount || deleteConfirmText.trim() !== DELETE_CONFIRMATION_PHRASE) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await onDeleteAccount(DELETE_CONFIRMATION_PHRASE);
+      // Host ends the session; nothing else to do here.
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Deletion failed. Please try again.');
+      setDeleting(false);
+    }
   };
 
   const handleReset = () => {
@@ -169,6 +227,18 @@ export function SettingsPanel({ user, onSave }: SettingsProps) {
         >
           <CheckCircle className="h-4 w-4" />
           Settings saved successfully
+        </motion.div>
+      )}
+
+      {saveError && (
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-lg p-3"
+          role="alert"
+        >
+          <AlertTriangle className="h-4 w-4" />
+          {saveError}
         </motion.div>
       )}
 
@@ -704,10 +774,24 @@ export function SettingsPanel({ user, onSave }: SettingsProps) {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-3">
-                  <Button variant="outline" className="w-full justify-start">
-                    <Download className="h-4 w-4 mr-2" />
-                    Export all data
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start"
+                    onClick={handleExport}
+                    disabled={!onExportData || exporting}
+                  >
+                    {exporting ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Download className="h-4 w-4 mr-2" />
+                    )}
+                    {exporting ? 'Preparing export…' : 'Export all data'}
                   </Button>
+                  {exportMessage && (
+                    <p className="text-xs text-muted-foreground" role="status">
+                      {exportMessage}
+                    </p>
+                  )}
                   <Button variant="outline" className="w-full justify-start text-destructive">
                     <Trash2 className="h-4 w-4 mr-2" />
                     Delete account and all data
@@ -884,18 +968,89 @@ export function SettingsPanel({ user, onSave }: SettingsProps) {
                   <CardTitle>Danger Zone</CardTitle>
                 </CardHeader>
                 <CardContent className="pt-0 space-y-3">
-                  <Button variant="destructive" className="w-full justify-start">
+                  <Button
+                    variant="destructive"
+                    className="w-full justify-start"
+                    disabled
+                    title="Not available yet"
+                  >
                     <Trash2 className="h-4 w-4 mr-2" />
                     Clear all tasks and history
                   </Button>
-                  <Button variant="destructive" className="w-full justify-start">
+                  <Button
+                    variant="destructive"
+                    className="w-full justify-start"
+                    disabled
+                    title="Not available yet"
+                  >
                     <RotateCcw className="h-4 w-4 mr-2" />
                     Reset AI learning
                   </Button>
-                  <Button variant="destructive" className="w-full justify-start">
-                    <X className="h-4 w-4 mr-2" />
-                    Delete account
-                  </Button>
+                  {!showDeleteConfirm ? (
+                    <Button
+                      variant="destructive"
+                      className="w-full justify-start"
+                      onClick={() => {
+                        setShowDeleteConfirm(true);
+                        setDeleteError(null);
+                      }}
+                      disabled={!onDeleteAccount}
+                    >
+                      <X className="h-4 w-4 mr-2" />
+                      Delete account
+                    </Button>
+                  ) : (
+                    <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 space-y-3">
+                      <p className="text-xs text-muted-foreground">
+                        This permanently deletes your account and every task, schedule block, and
+                        focus session. Type{' '}
+                        <span className="font-mono font-semibold text-destructive">
+                          {DELETE_CONFIRMATION_PHRASE}
+                        </span>{' '}
+                        to confirm.
+                      </p>
+                      <Input
+                        value={deleteConfirmText}
+                        onChange={(e) => setDeleteConfirmText(e.target.value)}
+                        placeholder={DELETE_CONFIRMATION_PHRASE}
+                        aria-label="Type DELETE MY ACCOUNT to confirm account deletion"
+                        autoComplete="off"
+                      />
+                      {deleteError && (
+                        <p className="text-xs text-destructive" role="alert">
+                          {deleteError}
+                        </p>
+                      )}
+                      <div className="flex gap-2">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={handleDeleteAccount}
+                          disabled={
+                            deleting || deleteConfirmText.trim() !== DELETE_CONFIRMATION_PHRASE
+                          }
+                        >
+                          {deleting ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            'Permanently delete'
+                          )}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setShowDeleteConfirm(false);
+                            setDeleteConfirmText('');
+                            setDeleteError(null);
+                          }}
+                          disabled={deleting}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>

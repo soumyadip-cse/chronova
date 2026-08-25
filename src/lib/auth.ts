@@ -109,7 +109,7 @@ export const authOptions: NextAuthOptions = {
       }
       return true;
     },
-    async jwt({ token, user, account }) {
+    async jwt({ token, user, account, trigger }) {
       if (user) {
         token.id = user.id;
         token.role = (user as any).role;
@@ -117,6 +117,18 @@ export const authOptions: NextAuthOptions = {
       }
       if (account) {
         token.provider = account.provider;
+      }
+      // Session-update trigger: the client calls useSession().update() after a
+      // profile PATCH so a changed timezone takes effect without re-login.
+      if (trigger === 'update' && token.id) {
+        const rows = await db
+          .select({ timezone: users.timezone })
+          .from(users)
+          .where(eq(users.id, String(token.id)))
+          .limit(1);
+        if (rows[0]?.timezone) {
+          token.timezone = rows[0].timezone;
+        }
       }
       return token;
     },

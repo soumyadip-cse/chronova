@@ -106,6 +106,49 @@ export interface InsightsResponse {
   data: InsightData;
 }
 
+/** Merged users + userProfiles view returned by /api/profile. */
+export interface ProfileResponse {
+  profile: {
+    id: string;
+    email: string;
+    role: Role;
+    timezone: string;
+    displayName: string | null;
+    onboardingCompleted: boolean;
+    energyProfile: { morning: number; afternoon: number; evening: number } | null;
+    notificationPrefs: {
+      email: boolean;
+      push: boolean;
+      dailySummary: boolean;
+      weeklyReflection: boolean;
+      burnoutAlerts: boolean;
+    } | null;
+    workingHours: { start: string; end: string };
+    peakEnergy: 'morning' | 'afternoon' | 'evening';
+    focusSessionLength: number | null;
+    productivityChallenge: string | null;
+    theme: Theme | null;
+    reducedMotion: boolean | null;
+    planningHorizon: 'day' | 'week' | 'month' | null;
+    aiAggressiveness: 'conservative' | 'balanced' | 'aggressive' | null;
+    createdAt: string | Date | null;
+  };
+}
+
+export interface ProfilePatchInput {
+  displayName?: string;
+  timezone?: string;
+  workingHours?: { start: string; end: string };
+  peakEnergy?: 'morning' | 'afternoon' | 'evening';
+  focusSessionLength?: number;
+  productivityChallenge?: string;
+  planningHorizon?: 'day' | 'week' | 'month';
+  aiAggressiveness?: 'conservative' | 'balanced' | 'aggressive';
+  reducedMotion?: boolean;
+  /** One-way latch: marks onboarding complete. */
+  completed?: true;
+}
+
 export interface EnergyForecast {
   hour: number;
   level: EnergyLevel;

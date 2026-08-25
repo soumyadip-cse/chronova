@@ -32,13 +32,14 @@ import {
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { ApiError } from '@/lib/api-error';
+import { errorHandler } from '@/lib/error-handler';
 
 const deleteSchema = z.object({
   confirmation: z.string().min(1),
   email: z.string().email(),
 });
 
-export async function POST(request: NextRequest) {
+async function handleDelete(request: NextRequest) {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) {
     throw ApiError.unauthorized();
@@ -118,4 +119,10 @@ export async function POST(request: NextRequest) {
   });
 
   return NextResponse.json({ success: true, message: 'Account permanently deleted' });
+}
+
+// Wrap with the shared error mapper so thrown ApiErrors (e.g. typed
+// confirmation mismatches) surface as proper 4xx responses, not 500s.
+export async function POST(request: NextRequest) {
+  return errorHandler(request, () => handleDelete(request));
 }

@@ -82,7 +82,8 @@ export function SignupForm({ googleEnabled }: SignupFormProps) {
       });
 
       if (result?.ok) {
-        router.push('/dashboard');
+        // New accounts always start with real onboarding.
+        router.push('/onboarding');
         router.refresh();
       } else {
         router.push('/login');
