@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { getWallClock, wallClockToUtc, addWallDays, type TzParts } from '@/lib/tz-utils';
 
 export const taskAttributesSchema = z.object({
   id: z.string().uuid().optional(),
@@ -60,6 +61,41 @@ const PRIORITY_MULTIPLIERS = {
   critical: 1.6,
 } as const;
 
+// ---------- Scheduling engine result contracts ----------
+
+export type UnschedulableReason =
+  'conflict_exhausted' | 'past_deadline' | 'exceeds_horizon' | 'no_working_window';
+
+export interface ScheduledProposal {
+  taskId: string;
+  startUtc: Date;
+  endUtc: Date;
+  priorityScore: number;
+}
+
+export interface UnschedulableTask {
+  taskId: string;
+  reason: UnschedulableReason;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Every task entering the scheduler ends up in exactly one of:
+ * scheduled / unschedulable / skipped (completed tasks only).
+ * The engine never silently drops a task.
+ */
+export interface SchedulePlanResult {
+  scheduled: ScheduledProposal[];
+  unschedulable: UnschedulableTask[];
+  skipped: Array<{ taskId: string; reason: 'completed' }>;
+}
+
+/** Deterministic upper bound on how far the scheduler searches for placement. */
+export const DEFAULT_SCHEDULING_HORIZON_DAYS = 14;
+
+const PLACEMENT_BUFFER_MINUTES = 10;
+const MAX_PLACEMENT_ITERATIONS = 5000;
+
 export function calculateUrgency(deadlineUtc: Date | null, currentTimeUtc: Date): number {
   if (!deadlineUtc) return 5;
 
@@ -86,7 +122,10 @@ export function calculateEnergyMatch(
   context: SchedulingContext,
   slotStartUtc: Date
 ): number {
-  const slotHour = slotStartUtc.getUTCHours();
+  // Bucket by the USER'S wall-clock hour, not UTC: 10:00Z is evening in Tokyo.
+  const timeZone = context.userTimezone || 'UTC';
+  const wall = getWallClock(slotStartUtc, timeZone);
+  const slotHour = wall.hour + wall.minute / 60;
   let userEnergyAtSlot: number;
 
   if (slotHour >= 5 && slotHour < 12) {
@@ -100,7 +139,8 @@ export function calculateEnergyMatch(
   const taskEnergyValue = { low: 0.3, balanced: 0.6, high: 0.9 }[taskEnergy];
 
   const diff = Math.abs(userEnergyAtSlot - taskEnergyValue);
-  return Math.max(0, 100 * (1 - diff));
+  // Integer sub-score: avoids float artifacts (e.g. 39.999... for exact 40).
+  return Math.round(Math.max(0, 100 * (1 - diff)));
 }
 
 export function calculateUserOverride(
@@ -245,97 +285,276 @@ export function rankTasks(
 export function generateScheduleProposal(
   tasks: TaskAttributes[],
   context: SchedulingContext,
-  focusWindowMinutes: number = 50
-): Array<{ taskId: string; startUtc: Date; endUtc: Date; priorityScore: number }> {
-  const ranked = rankTasks(tasks, context, new Date());
-  const proposals: Array<{ taskId: string; startUtc: Date; endUtc: Date; priorityScore: number }> =
-    [];
-  let currentTime = new Date(context.currentTimeUtc);
+  _focusWindowMinutes: number = 50,
+  options: { horizonDays?: number } = {}
+): SchedulePlanResult {
+  const timeZone = context.userTimezone || 'UTC';
+  const ranked = rankTasks(tasks, context, context.currentTimeUtc);
 
-  const workingStart = parseTime(context.workingHours.start);
-  const workingEnd = parseTime(context.workingHours.end);
+  // Busy intervals: BOTH calendar events and previously placed schedule blocks
+  // block placement under the same overlap rule (start < busyEnd && end > busyStart).
+  const busyIntervals: Array<{ startUtc: Date; endUtc: Date }> = [
+    ...context.calendarEvents,
+    ...context.scheduledTasks.map((b) => ({ startUtc: b.startUtc, endUtc: b.endUtc })),
+  ].filter((i) => i.endUtc.getTime() > i.startUtc.getTime());
+
+  const workingWindow = parseWorkingWindow(context.workingHours);
+  const horizonDays = options.horizonDays ?? DEFAULT_SCHEDULING_HORIZON_DAYS;
+
+  const scheduled: ScheduledProposal[] = [];
+  const unschedulable: UnschedulableTask[] = [];
+  const skipped: Array<{ taskId: string; reason: 'completed' }> = [];
+
+  let cursor = new Date(context.currentTimeUtc);
+  if (!Number.isFinite(cursor.getTime())) {
+    cursor = new Date();
+  }
+  const horizonEnd = computeHorizonEnd(cursor, timeZone, workingWindow, horizonDays);
 
   for (const task of ranked) {
-    if (task.status === 'completed') continue;
-
-    const taskEnd = new Date(currentTime.getTime() + task.estimatedMinutes * 60 * 1000);
-
-    if (hasConflict(currentTime, taskEnd, context.calendarEvents)) {
-      currentTime = findNextAvailableSlot(currentTime, task.estimatedMinutes, context);
+    if (task.status === 'completed') {
+      skipped.push({ taskId: task.id || '', reason: 'completed' });
       continue;
     }
 
-    if (isOutsideWorkingHours(currentTime, taskEnd, workingStart, workingEnd)) {
-      currentTime = nextWorkingDayStart(currentTime, workingStart);
+    const taskId = task.id || '';
+
+    if (!workingWindow) {
+      unschedulable.push({
+        taskId,
+        reason: 'no_working_window',
+        details: { workingHours: context.workingHours },
+      });
       continue;
     }
 
-    proposals.push({
-      taskId: task.id || '',
-      startUtc: new Date(currentTime),
-      endUtc: new Date(currentTime.getTime() + task.estimatedMinutes * 60 * 1000),
+    const windowMinutes = workingWindow.endMin - workingWindow.startMin;
+    if (task.estimatedMinutes > windowMinutes) {
+      unschedulable.push({
+        taskId,
+        reason: 'no_working_window',
+        details: {
+          estimatedMinutes: task.estimatedMinutes,
+          dailyWindowMinutes: windowMinutes,
+          workingHours: context.workingHours,
+        },
+      });
+      continue;
+    }
+
+    const deadline = task.deadlineUtc ? new Date(task.deadlineUtc) : null;
+    const validDeadline = deadline && Number.isFinite(deadline.getTime()) ? deadline : null;
+
+    if (validDeadline && validDeadline.getTime() <= context.currentTimeUtc.getTime()) {
+      unschedulable.push({
+        taskId,
+        reason: 'past_deadline',
+        details: {
+          overdueAtScheduleTime: true,
+          deadlineUtc: validDeadline.toISOString(),
+        },
+      });
+      continue;
+    }
+
+    const fit = findEarliestFit(
+      cursor,
+      task.estimatedMinutes,
+      workingWindow,
+      timeZone,
+      busyIntervals,
+      horizonEnd
+    );
+
+    if (!fit) {
+      // No conflict-free working slot exists before the horizon.
+      if (validDeadline && validDeadline.getTime() <= horizonEnd.getTime()) {
+        // The deadline lies inside the searched range, so conflicts/availability
+        // — not the horizon — are what prevented placement.
+        unschedulable.push({
+          taskId,
+          reason: 'conflict_exhausted',
+          details: {
+            deadlineUtc: validDeadline.toISOString(),
+            horizonEndUtc: horizonEnd.toISOString(),
+          },
+        });
+      } else {
+        unschedulable.push({
+          taskId,
+          reason: 'exceeds_horizon',
+          details: {
+            horizonDays,
+            horizonEndUtc: horizonEnd.toISOString(),
+          },
+        });
+      }
+      continue;
+    }
+
+    // Deadline feasibility: never place a task so it completes after its deadline.
+    if (validDeadline && fit.end.getTime() > validDeadline.getTime()) {
+      unschedulable.push({
+        taskId,
+        reason: 'past_deadline',
+        details: {
+          overdueAtScheduleTime: false,
+          deadlineUtc: validDeadline.toISOString(),
+          earliestCompletionUtc: fit.end.toISOString(),
+        },
+      });
+      continue;
+    }
+
+    scheduled.push({
+      taskId,
+      startUtc: fit.start,
+      endUtc: fit.end,
       priorityScore: task.priorityScore,
     });
 
-    currentTime = new Date(
-      currentTime.getTime() + task.estimatedMinutes * 60 * 1000 + 10 * 60 * 1000
-    );
+    // The next candidate starts after this block plus a deterministic buffer.
+    cursor = new Date(fit.end.getTime() + PLACEMENT_BUFFER_MINUTES * 60 * 1000);
   }
 
-  return proposals;
+  return { scheduled, unschedulable, skipped };
 }
 
-function hasConflict(
-  start: Date,
-  end: Date,
-  events: Array<{ startUtc: Date; endUtc: Date }>
-): boolean {
-  return events.some((e) => start < e.endUtc && end > e.startUtc);
+// ---------- Placement internals (all wall-clock math is user-timezone based) ----------
+
+interface WorkingWindow {
+  startMin: number;
+  endMin: number;
 }
 
-function findNextAvailableSlot(
+function parseWorkingWindow(workingHours: { start: string; end: string }): WorkingWindow | null {
+  const start = parseTime(workingHours?.start ?? '');
+  const end = parseTime(workingHours?.end ?? '');
+  if (start === null || end === null) return null;
+  if (start >= end || start < 0 || end > 24 * 60) return null;
+  return { startMin: start, endMin: end };
+}
+
+function parseTime(timeStr: string): number | null {
+  const match = /^(\d{1,2}):(\d{2})$/.exec(timeStr.trim());
+  if (!match) return null;
+  const hours = parseInt(match[1], 10);
+  const minutes = parseInt(match[2], 10);
+  if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+  return hours * 60 + minutes;
+}
+
+function minutesOfDay(parts: TzParts): number {
+  return parts.hour * 60 + parts.minute;
+}
+
+function computeHorizonEnd(
+  from: Date,
+  timeZone: string,
+  window: WorkingWindow | null,
+  horizonDays: number
+): Date {
+  const parts = getWallClock(from, timeZone);
+  const target = addWallDays(parts, Math.max(0, Math.floor(horizonDays)));
+  const endHour = window ? Math.floor(window.endMin / 60) : 23;
+  const endMinute = window ? window.endMin % 60 : 59;
+  return wallClockToUtc(target.year, target.month, target.day, endHour, endMinute, timeZone);
+}
+
+interface BusyInterval {
+  startUtc: Date;
+  endUtc: Date;
+}
+
+function findOverlap(intervals: BusyInterval[], start: Date, end: Date): BusyInterval | undefined {
+  return intervals.find(
+    (i) => start.getTime() < i.endUtc.getTime() && end.getTime() > i.startUtc.getTime()
+  );
+}
+
+/**
+ * Earliest conflict-free slot of `durationMinutes` that fits inside the user's
+ * working window on some day, starting no earlier than `from`, ending no later
+ * than `bound`. All day/window arithmetic happens on the user's wall clock and
+ * converts back to UTC through DST-safe wallClockToUtc. Returns null when no
+ * such slot exists within the bound — failure is always explicit.
+ */
+function findEarliestFit(
   from: Date,
   durationMinutes: number,
-  context: SchedulingContext
-): Date {
-  let candidate = new Date(from);
-  for (let i = 0; i < 100; i++) {
-    const end = new Date(candidate.getTime() + durationMinutes * 60 * 1000);
-    if (
-      !hasConflict(candidate, end, context.calendarEvents) &&
-      !isOutsideWorkingHours(
-        candidate,
-        end,
-        parseTime(context.workingHours.start),
-        parseTime(context.workingHours.end)
-      )
-    ) {
-      return candidate;
+  window: WorkingWindow,
+  timeZone: string,
+  busyIntervals: BusyInterval[],
+  bound: Date
+): { start: Date; end: Date } | null {
+  const durationMs = durationMinutes * 60 * 1000;
+  let candidate = new Date(from.getTime());
+
+  for (let iteration = 0; iteration < MAX_PLACEMENT_ITERATIONS; iteration++) {
+    const normalized = normalizeToWindow(candidate, durationMs, window, timeZone);
+
+    if (normalized.getTime() !== candidate.getTime()) {
+      candidate = normalized;
+      continue;
     }
-    candidate = new Date(candidate.getTime() + 30 * 60 * 1000);
+
+    const end = new Date(candidate.getTime() + durationMs);
+    const overlap = findOverlap(busyIntervals, candidate, end);
+    if (overlap) {
+      // Jump past the blocking interval instead of blind stepping.
+      candidate = new Date(overlap.endUtc.getTime());
+      continue;
+    }
+
+    if (candidate.getTime() >= bound.getTime() || end.getTime() > bound.getTime()) {
+      return null;
+    }
+    return { start: new Date(candidate.getTime()), end };
   }
-  return from;
+
+  return null;
 }
 
-function isOutsideWorkingHours(
-  start: Date,
-  end: Date,
-  workStart: number,
-  workEnd: number
-): boolean {
-  const startHour = start.getUTCHours() + start.getUTCMinutes() / 60;
-  const endHour = end.getUTCHours() + end.getUTCMinutes() / 60;
-  return startHour < workStart || endHour > workEnd;
-}
+/**
+ * Move a UTC instant forward to the next instant whose user wall clock lies on
+ * a day where [wallStart, wallStart+duration] fits inside the working window.
+ * Never moves backwards. Returns input unchanged when already acceptable.
+ */
+function normalizeToWindow(
+  instant: Date,
+  durationMs: number,
+  window: WorkingWindow,
+  timeZone: string
+): Date {
+  const wall = getWallClock(instant, timeZone);
+  const currentMin = minutesOfDay(wall);
 
-function nextWorkingDayStart(date: Date, workStart: number): Date {
-  const next = new Date(date);
-  next.setUTCDate(next.getUTCDate() + 1);
-  next.setUTCHours(workStart, 0, 0, 0);
-  return next;
-}
+  const startTarget = (parts: TzParts): Date =>
+    wallClockToUtc(
+      parts.year,
+      parts.month,
+      parts.day,
+      Math.floor(window.startMin / 60),
+      window.startMin % 60,
+      timeZone
+    );
 
-function parseTime(timeStr: string): number {
-  const [hours, minutes] = timeStr.split(':').map(Number);
-  return hours + minutes / 60;
+  if (currentMin < window.startMin) {
+    return startTarget(wall);
+  }
+
+  if (currentMin >= window.endMin) {
+    return startTarget(addWallDays(wall, 1));
+  }
+
+  // Inside today's window: does the whole duration stay within it?
+  const endWall = getWallClock(new Date(instant.getTime() + durationMs), timeZone);
+  const crossesMidnight =
+    endWall.year !== wall.year || endWall.month !== wall.month || endWall.day !== wall.day;
+  const endMinOfDay = endWall.hour * 60 + endWall.minute;
+  if (crossesMidnight || endMinOfDay > window.endMin) {
+    return startTarget(addWallDays(wall, 1));
+  }
+
+  return new Date(instant.getTime());
 }

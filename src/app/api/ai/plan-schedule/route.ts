@@ -6,10 +6,11 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { db } from '@/db';
 import { tasks, calendarEvents, scheduleBlocks, userProfiles } from '@/db/schema';
-import { eq, and, gte, lte, inArray } from 'drizzle-orm';
+import { eq, and, gt, lt, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { generateScheduleProposal, rankTasks, SchedulingContext } from '@/lib/priority-engine';
 import { withAIRateLimit } from '@/lib/with-rate-limit';
+import { userDayBounds } from '@/lib/tz-utils';
 
 const planScheduleSchema = z.object({
   date: z.string().datetime().optional(),
@@ -32,11 +33,14 @@ async function handlePlanSchedule(request: NextRequest) {
     );
   }
 
-  const targetDate = parsed.data.date ? new Date(parsed.data.date) : new Date();
-  targetDate.setHours(0, 0, 0, 0);
-  const nextDay = new Date(targetDate);
-  nextDay.setDate(nextDay.getDate() + 1);
+  // Day boundaries are derived in the USER'S timezone, never server-local.
+  const userTimezone = session.user.timezone || 'UTC';
+  const requestedAt = parsed.data.date ? new Date(parsed.data.date) : new Date();
+  const { dayStartUtc, dayEndUtc } = userDayBounds(requestedAt, userTimezone);
 
+  // Interval-overlap semantics: an entry conflicts with the planning day when
+  // it starts before the day ends AND ends after the day starts. Day-bucketed
+  // filters (start BETWEEN day AND day+1) would miss midnight-spanning events.
   const [profile, userTasks, calEvents, existingBlocks] = await Promise.all([
     db.query.userProfiles.findFirst({ where: eq(userProfiles.userId, session.user.id) }),
     db
@@ -54,8 +58,8 @@ async function handlePlanSchedule(request: NextRequest) {
       .where(
         and(
           eq(calendarEvents.userId, session.user.id),
-          gte(calendarEvents.startUtc, targetDate),
-          lte(calendarEvents.startUtc, nextDay)
+          lt(calendarEvents.startUtc, dayEndUtc),
+          gt(calendarEvents.endUtc, dayStartUtc)
         )
       ),
     db
@@ -64,17 +68,15 @@ async function handlePlanSchedule(request: NextRequest) {
       .where(
         and(
           eq(scheduleBlocks.userId, session.user.id),
-          gte(scheduleBlocks.startUtc, targetDate),
-          lte(scheduleBlocks.startUtc, nextDay)
+          lt(scheduleBlocks.startUtc, dayEndUtc),
+          gt(scheduleBlocks.endUtc, dayStartUtc)
         )
       ),
   ]);
 
-  const now = new Date();
-
   const context: SchedulingContext = {
-    currentTimeUtc: now,
-    userTimezone: session.user.timezone,
+    currentTimeUtc: new Date(),
+    userTimezone,
     energyProfile: profile?.energyProfile || { morning: 0.7, afternoon: 0.5, evening: 0.4 },
     scheduledTasks: existingBlocks.map((b) => ({
       id: b.id,
@@ -108,13 +110,18 @@ async function handlePlanSchedule(request: NextRequest) {
     createdAt: t.createdAt.toISOString(),
   }));
 
-  const ranked = rankTasks(taskAttributes, context, targetDate);
-  const proposals = generateScheduleProposal(ranked, context);
+  const ranked = rankTasks(taskAttributes, context, context.currentTimeUtc);
+  const plan = generateScheduleProposal(ranked, context);
 
+  // Display-only: proposals are returned for review and are NOT persisted into
+  // schedule_blocks here. Persisting stays an explicit user action.
   return NextResponse.json({
-    proposals,
+    date: dayStartUtc.toISOString(),
+    scheduled: plan.scheduled,
+    proposals: plan.scheduled,
+    unschedulable: plan.unschedulable,
+    skipped: plan.skipped,
     rankedTasks: ranked,
-    date: targetDate.toISOString(),
   });
 }
 

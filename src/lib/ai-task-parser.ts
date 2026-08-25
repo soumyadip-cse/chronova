@@ -1,3 +1,5 @@
+import { getWallClock, wallClockToUtc, type TzParts } from '@/lib/tz-utils';
+
 import { z } from 'zod';
 
 export const parseTaskInputSchema = z.object({
@@ -192,57 +194,6 @@ async function parseWithClaude(
 }
 
 // ---------- Deterministic offline fallback ----------
-
-interface TzParts {
-  year: number;
-  month: number;
-  day: number;
-  hour: number;
-  minute: number;
-}
-
-function getWallClock(date: Date, timeZone: string): TzParts {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  });
-  const parts = Object.fromEntries(fmt.formatToParts(date).map((p) => [p.type, p.value]));
-  return {
-    year: parseInt(parts.year, 10),
-    month: parseInt(parts.month, 10),
-    day: parseInt(parts.day, 10),
-    hour: parseInt(parts.hour, 10),
-    minute: parseInt(parts.minute, 10),
-  };
-}
-
-/**
- * Convert wall-clock time in an IANA timezone to a UTC instant.
- * Deterministic: resolves the offset by testing which UTC instant produces
- * the requested wall clock in that zone (handles DST boundaries).
- */
-function wallClockToUtc(
-  year: number,
-  month: number,
-  day: number,
-  hour: number,
-  minute: number,
-  timeZone: string
-): Date {
-  let utcGuess = Date.UTC(year, month - 1, day, hour, minute);
-  for (let i = 0; i < 2; i++) {
-    const asTz = getWallClock(new Date(utcGuess), timeZone);
-    const asIfUtc = Date.UTC(asTz.year, asTz.month - 1, asTz.day, asTz.hour, asTz.minute);
-    const diff = Date.UTC(year, month - 1, day, hour, minute) - asIfUtc;
-    utcGuess += diff;
-  }
-  return new Date(utcGuess);
-}
 
 const WEEKDAYS = [
   'sunday',

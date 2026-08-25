@@ -232,17 +232,18 @@ describe('Priority Engine', () => {
         createMockTask({ id: 'task-2', status: 'today', estimatedMinutes: 45 }),
         createMockTask({ id: 'task-3', status: 'completed', estimatedMinutes: 60 }),
       ];
-      const proposals = generateScheduleProposal(tasks, mockContext);
-      expect(proposals).toHaveLength(2); // Only inbox and today
-      expect(proposals[0].taskId).toBeDefined();
-      expect(proposals[0].startUtc).toBeInstanceOf(Date);
-      expect(proposals[0].endUtc).toBeInstanceOf(Date);
+      const result = generateScheduleProposal(tasks, mockContext);
+      expect(result.scheduled).toHaveLength(2); // Only inbox and today
+      expect(result.scheduled[0].taskId).toBeDefined();
+      expect(result.scheduled[0].startUtc).toBeInstanceOf(Date);
+      expect(result.scheduled[0].endUtc).toBeInstanceOf(Date);
     });
 
     it('skips completed tasks', () => {
       const tasks = [createMockTask({ id: 'done', status: 'completed' })];
-      const proposals = generateScheduleProposal(tasks, mockContext);
-      expect(proposals).toHaveLength(0);
+      const result = generateScheduleProposal(tasks, mockContext);
+      expect(result.scheduled).toHaveLength(0);
+      expect(result.skipped).toEqual([{ taskId: 'done', reason: 'completed' }]);
     });
 
     it('respects calendar conflicts', () => {
@@ -253,9 +254,9 @@ describe('Priority Engine', () => {
         ],
       };
       const tasks = [createMockTask({ id: 'task-1', estimatedMinutes: 60 })];
-      const proposals = generateScheduleProposal(tasks, contextWithConflict);
+      const result = generateScheduleProposal(tasks, contextWithConflict);
       // Should find slot after the meeting
-      expect(proposals[0].startUtc.getTime()).toBeGreaterThanOrEqual(
+      expect(result.scheduled[0].startUtc.getTime()).toBeGreaterThanOrEqual(
         new Date('2024-01-15T11:00:00Z').getTime()
       );
     });

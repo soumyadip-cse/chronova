@@ -118,3 +118,28 @@ export interface KeyboardShortcut {
   description: string;
   action: () => void;
 }
+
+// ---------- Deterministic scheduling engine contracts ----------
+
+export interface ScheduledProposal {
+  taskId: string;
+  startUtc: string;
+  endUtc: string;
+  priorityScore: number;
+}
+
+export type UnschedulableReason =
+  'conflict_exhausted' | 'past_deadline' | 'exceeds_horizon' | 'no_working_window';
+
+export interface UnschedulableTask {
+  taskId: string;
+  reason: UnschedulableReason;
+  details?: Record<string, unknown>;
+}
+
+export interface PlanScheduleResponse {
+  date: string;
+  scheduled: ScheduledProposal[];
+  unschedulable: UnschedulableTask[];
+  skipped: Array<{ taskId: string; reason: string }>;
+}

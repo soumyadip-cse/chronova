@@ -39,7 +39,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from '@/components/ui/dropdown-menu';
-import { AIRecommendation, ScheduleChange, Task } from '@/types';
+import {
+  AIRecommendation,
+  ScheduleChange,
+  Task,
+  PlanScheduleResponse,
+  UnschedulableTask,
+} from '@/types';
 import { formatTime, formatDateShort } from '@/lib/utils';
 
 interface AIPlannerProps {
@@ -97,6 +103,80 @@ const RECOMMENDATION_TYPE_COLORS: Record<AIRecommendation['type'], string> = {
   delegate: 'bg-red-500/10 text-red-400 border-red-500/20',
   defer: 'bg-muted text-muted-foreground',
 };
+
+const PLAN_INTENT = /\b(plan|schedule|rebalanc)/i;
+
+function describeUnschedulable(task: UnschedulableTask): string {
+  switch (task.reason) {
+    case 'past_deadline':
+      return task.details?.overdueAtScheduleTime
+        ? 'deadline already passed before scheduling'
+        : 'cannot finish before its deadline given your availability';
+    case 'conflict_exhausted':
+      return 'no conflict-free working time left before its deadline';
+    case 'exceeds_horizon':
+      return `no free slot within the next ${String(task.details?.horizonDays ?? 14)} days`;
+    case 'no_working_window':
+      return 'does not fit inside your working hours';
+    default:
+      return 'could not be placed';
+  }
+}
+
+async function fetchPlanSchedule(): Promise<PlanScheduleResponse | null> {
+  try {
+    const response = await fetch('/api/ai/plan-schedule', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) return null;
+    return (await response.json()) as PlanScheduleResponse;
+  } catch {
+    return null;
+  }
+}
+
+function buildPlanResponse(
+  plan: PlanScheduleResponse,
+  tasks: Task[]
+): { role: 'assistant'; content: string; recommendations: AIRecommendation[] } {
+  const titleFor = (taskId: string) => tasks.find((t) => t.id === taskId)?.title;
+  const shortId = (taskId: string) => titleFor(taskId) ?? `task ${taskId.slice(0, 8)}…`;
+
+  const recommendations: AIRecommendation[] = plan.scheduled.map((proposal) => ({
+    id: `plan-${proposal.taskId}`,
+    type: 'reschedule' as const,
+    title: `Schedule "${shortId(proposal.taskId)}"`,
+    description: `${formatTime(new Date(proposal.startUtc))} – ${formatTime(
+      new Date(proposal.endUtc)
+    )} · priority ${Math.round(proposal.priorityScore)}/100`,
+    reasoning:
+      'Placed by the deterministic scheduler: fits your working hours, avoids existing events and blocks.',
+    confidence: 0.95,
+    affectedTasks: [proposal.taskId],
+    proposedChanges: [],
+    status: 'pending' as const,
+  }));
+
+  let content =
+    plan.scheduled.length > 0
+      ? `Here's your optimized schedule — ${plan.scheduled.length} block${
+          plan.scheduled.length === 1 ? '' : 's'
+        } placed inside your availability:`
+      : 'No tasks could be scheduled right now.';
+
+  if (plan.unschedulable.length > 0) {
+    content += `\n\nCould not schedule ${plan.unschedulable.length} task${
+      plan.unschedulable.length === 1 ? '' : 's'
+    }:`;
+    for (const entry of plan.unschedulable) {
+      content += `\n• ${shortId(entry.taskId)} — ${describeUnschedulable(entry)}`;
+    }
+  }
+
+  return { role: 'assistant', content, recommendations };
+}
 
 function RecommendationCard({
   recommendation,
@@ -363,6 +443,21 @@ export function AIPlanner({
 
     setMessages((prev) => [...prev, { role: 'user', content: userMessage }]);
     setIsLoading(true);
+
+    // Planning intents hit the real deterministic scheduling engine; anything
+    // else (and any unauthenticated/demo fallback) keeps the chat experience.
+    if (PLAN_INTENT.test(userMessage)) {
+      try {
+        const plan = await fetchPlanSchedule();
+        setMessages((prev) => [
+          ...prev,
+          plan ? buildPlanResponse(plan, tasks) : generateMockResponse(userMessage, tasks),
+        ]);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
 
     // Simulate AI response
     setTimeout(() => {
