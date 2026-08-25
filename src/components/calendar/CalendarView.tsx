@@ -17,6 +17,9 @@ import {
   Moon,
   Sun,
   Target,
+  CalendarCheck,
+  Lock,
+  CheckCircle2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -51,6 +54,7 @@ const EVENT_TYPE_CONFIG = {
   break: { label: 'Break', icon: Coffee, color: 'bg-amber-500' },
   flexible: { label: 'Flexible', icon: Moon, color: 'bg-purple-500' },
   personal: { label: 'Personal', icon: Sun, color: 'bg-pink-500' },
+  schedule: { label: 'Scheduled', icon: CalendarCheck, color: 'bg-indigo-500' },
 };
 
 const HOURS = Array.from({ length: 24 }, (_, i) => i);
@@ -142,9 +146,24 @@ function TimeGrid({
                         <span className="opacity-90">
                           {formatTime(event.start)}–{formatTime(event.end)}
                         </span>
-                        <Badge variant="outline" className="text-[10px] px-1.5 py-0.5">
-                          {EVENT_TYPE_CONFIG[event.type].label}
-                        </Badge>
+                        <span className="flex items-center gap-1">
+                          {(event.isLocked || event.isCompleted) && (
+                            <>
+                              {event.isCompleted && (
+                                <CheckCircle2
+                                  className="h-3 w-3 opacity-90"
+                                  aria-label="completed"
+                                />
+                              )}
+                              {event.isLocked && (
+                                <Lock className="h-3 w-3 opacity-90" aria-label="locked" />
+                              )}
+                            </>
+                          )}
+                          <Badge variant="outline" className="text-[10px] px-1.5 py-0.5">
+                            {EVENT_TYPE_CONFIG[event.type].label}
+                          </Badge>
+                        </span>
                       </div>
                     </div>
                   </motion.div>

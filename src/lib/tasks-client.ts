@@ -1,4 +1,12 @@
-import type { Task, TaskStatus, TaskPriority, EnergyLevel, CalendarEvent } from '@/types';
+import type {
+  Task,
+  TaskStatus,
+  TaskPriority,
+  EnergyLevel,
+  CalendarEvent,
+  ScheduledBlock,
+  PlanApplyResponse,
+} from '@/types';
 
 interface ApiTaskRow {
   id: string;
@@ -175,4 +183,101 @@ export function tasksAsDeadlineEvents(tasks: Task[]): CalendarEvent[] {
         isAllDay: false,
       };
     });
+}
+
+// ---------- Persisted schedule blocks ----------
+
+interface ApiScheduleBlockRow {
+  id: string;
+  taskId: string | null;
+  startUtc: string;
+  endUtc: string;
+  isLocked: boolean | null;
+  isCompleted: boolean | null;
+  taskTitle?: string | null;
+}
+
+export interface CalendarWindow {
+  events: CalendarEvent[];
+  blocks: ScheduledBlock[];
+}
+
+/**
+ * Fetch calendar events AND persisted scheduler blocks for a window. Blocks are
+ * returned raw so callers can render or map them; events keep the same shape as
+ * fetchCalendarEvents.
+ */
+export async function fetchCalendarWithBlocks(start: Date, end: Date): Promise<CalendarWindow> {
+  const params = new URLSearchParams({
+    start: start.toISOString(),
+    end: end.toISOString(),
+    view: 'week',
+  });
+  const res = await fetch(`/api/calendar?${params.toString()}`, { cache: 'no-store' });
+  if (!res.ok) throw new TasksApiError(res.status, await parseError(res));
+  const data = await res.json();
+
+  const events = ((data.events ?? []) as ApiCalendarEventRow[]).map((row) => ({
+    id: row.id,
+    title: row.title,
+    description: row.description ?? undefined,
+    start: new Date(row.startUtc),
+    end: new Date(row.endUtc),
+    type: 'focus' as const,
+    color: row.color ?? '#8B5CF6',
+    isAllDay: row.isAllDay ?? false,
+    location: row.location ?? undefined,
+  }));
+
+  const blocks = ((data.scheduleBlocks ?? []) as ApiScheduleBlockRow[])
+    .filter((b): b is ApiScheduleBlockRow & { taskId: string } => typeof b.taskId === 'string')
+    .map((b) => ({
+      id: b.id,
+      taskId: b.taskId,
+      title: b.taskTitle ?? 'Scheduled task',
+      startUtc: b.startUtc,
+      endUtc: b.endUtc,
+      isLocked: b.isLocked ?? false,
+      isCompleted: b.isCompleted ?? false,
+    }));
+
+  return { events, blocks };
+}
+
+/** Map persisted blocks onto the calendar with a distinct visual identity. */
+export function scheduleBlocksAsEvents(blocks: ScheduledBlock[]): CalendarEvent[] {
+  return blocks.map((b) => {
+    const start = new Date(b.startUtc);
+    return {
+      id: `block-${b.id}`,
+      title: b.title || 'Scheduled task',
+      start,
+      end: new Date(b.endUtc),
+      type: 'schedule' as const,
+      color: '#6366F1',
+      taskId: b.taskId,
+      scheduleBlockId: b.id,
+      isLocked: b.isLocked,
+      isCompleted: b.isCompleted,
+      isAllDay: false,
+    };
+  });
+}
+
+/**
+ * Ask the server to persist scheduler placements for the given tasks. Only
+ * taskIds travel to the server — it recomputes all times authoritatively.
+ */
+export async function applyPlanSchedule(taskIds: string[]): Promise<PlanApplyResponse> {
+  const res = await fetch('/api/ai/plan-schedule/apply', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ taskIds }),
+  });
+  if (!res.ok) throw new TasksApiError(res.status, await parseError(res));
+  const data = (await res.json()) as PlanApplyResponse;
+  return {
+    applied: Array.isArray(data.applied) ? data.applied : [],
+    failed: Array.isArray(data.failed) ? data.failed : [],
+  };
 }

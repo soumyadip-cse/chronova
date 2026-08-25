@@ -52,12 +52,46 @@ export interface CalendarEvent {
   description?: string;
   start: Date;
   end: Date;
-  type: 'meeting' | 'focus' | 'break' | 'flexible' | 'personal';
+  type: 'meeting' | 'focus' | 'break' | 'flexible' | 'personal' | 'schedule';
   color: string;
   taskId?: string;
   isAllDay?: boolean;
   location?: string;
   attendees?: string[];
+  scheduleBlockId?: string;
+  isLocked?: boolean;
+  isCompleted?: boolean;
+}
+
+/** A persisted scheduler block as returned by /api/calendar. */
+export interface ScheduledBlock {
+  id: string;
+  taskId: string;
+  title?: string;
+  startUtc: string;
+  endUtc: string;
+  isLocked: boolean;
+  isCompleted: boolean;
+}
+
+export interface AppliedBlock {
+  taskId: string;
+  blockId: string;
+  startUtc: string;
+  endUtc: string;
+}
+
+export type ApplyFailureReason =
+  UnschedulableReason | 'already_completed' | 'not_schedulable' | 'not_found';
+
+export interface ApplyFailure {
+  taskId: string;
+  reason: ApplyFailureReason;
+}
+
+export interface PlanApplyResponse {
+  applied: AppliedBlock[];
+  failed: ApplyFailure[];
 }
 
 export interface EnergyForecast {

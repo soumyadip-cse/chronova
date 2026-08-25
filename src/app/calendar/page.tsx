@@ -9,7 +9,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import {
   fetchTasks,
-  fetchCalendarEvents,
+  fetchCalendarWithBlocks,
+  scheduleBlocksAsEvents,
   tasksAsDeadlineEvents,
   TasksApiError,
 } from '@/lib/tasks-client';
@@ -34,8 +35,8 @@ export default function CalendarPage() {
       windowEnd.setDate(windowEnd.getDate() + 21);
       windowEnd.setHours(23, 59, 59, 999);
 
-      const [realEvents, tasks] = await Promise.all([
-        fetchCalendarEvents(windowStart, windowEnd),
+      const [{ events: realEvents, blocks }, tasks] = await Promise.all([
+        fetchCalendarWithBlocks(windowStart, windowEnd),
         fetchTasks(),
       ]);
 
@@ -43,7 +44,13 @@ export default function CalendarPage() {
         (e) => e.start >= windowStart && e.start <= windowEnd
       );
 
-      setEvents([...realEvents, ...deadlineEvents]);
+      // Persisted scheduler blocks render alongside real events so an applied
+      // plan is visible without leaving the calendar.
+      const blockEvents = scheduleBlocksAsEvents(blocks).filter(
+        (e) => e.start >= windowStart && e.start <= windowEnd
+      );
+
+      setEvents([...realEvents, ...deadlineEvents, ...blockEvents]);
     } catch (error) {
       setLoadError(
         error instanceof TasksApiError ? error.message : 'Unable to load your calendar.'

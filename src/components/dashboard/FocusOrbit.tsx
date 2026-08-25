@@ -56,6 +56,7 @@ const EVENT_TYPE_COLORS = {
   break: 'hsl(43 100% 58%)',
   flexible: 'hsl(262 83% 58%)',
   personal: 'hsl(340 82% 52%)',
+  schedule: 'hsl(239 84% 67%)',
 };
 
 const EVENT_ICONS = {

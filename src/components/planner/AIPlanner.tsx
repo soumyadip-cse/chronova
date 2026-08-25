@@ -17,6 +17,7 @@ import {
   Target,
   Coffee,
   Calendar,
+  CalendarCheck,
   AlertTriangle,
   ChevronDown,
   ChevronUp,
@@ -47,13 +48,27 @@ import {
   UnschedulableTask,
 } from '@/types';
 import { formatTime, formatDateShort } from '@/lib/utils';
+import { applyPlanSchedule } from '@/lib/tasks-client';
 
 interface AIPlannerProps {
   tasks: Task[];
   events: any[];
   energyForecast: any[];
-  onApplyRecommendations: (recIds: string[]) => void;
-  onDismissRecommendations: (recIds: string[]) => void;
+  onApplyRecommendations?: (recIds: string[]) => void;
+  onDismissRecommendations?: (recIds: string[]) => void;
+  /** Called after proposals are persisted so the host page can refresh data. */
+  onScheduleApplied?: () => void;
+}
+
+type ApplyState = 'idle' | 'applying' | 'applied' | 'error';
+
+interface PlannerChatMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  recommendations?: AIRecommendation[];
+  plan?: PlanScheduleResponse;
+  applyState?: ApplyState;
+  applyErrors?: string[];
 }
 
 const QUICK_PROMPTS = [
@@ -137,10 +152,7 @@ async function fetchPlanSchedule(): Promise<PlanScheduleResponse | null> {
   }
 }
 
-function buildPlanResponse(
-  plan: PlanScheduleResponse,
-  tasks: Task[]
-): { role: 'assistant'; content: string; recommendations: AIRecommendation[] } {
+function buildPlanResponse(plan: PlanScheduleResponse, tasks: Task[]): PlannerChatMessage {
   const titleFor = (taskId: string) => tasks.find((t) => t.id === taskId)?.title;
   const shortId = (taskId: string) => titleFor(taskId) ?? `task ${taskId.slice(0, 8)}…`;
 
@@ -175,7 +187,13 @@ function buildPlanResponse(
     }
   }
 
-  return { role: 'assistant', content, recommendations };
+  return {
+    role: 'assistant',
+    content,
+    recommendations,
+    plan,
+    applyState: 'idle' as const,
+  };
 }
 
 function RecommendationCard({
@@ -312,21 +330,85 @@ function RecommendationCard({
   );
 }
 
+function PlanApplyBar({
+  plan,
+  applyState = 'idle',
+  applyErrors,
+  onApplyPlan,
+}: {
+  plan: PlanScheduleResponse;
+  applyState?: ApplyState;
+  applyErrors?: string[];
+  onApplyPlan: () => void;
+}) {
+  const scheduledCount = plan.scheduled.length;
+  if (scheduledCount === 0) return null;
+
+  if (applyState === 'applied') {
+    return (
+      <div className="mt-3 flex items-center gap-2 text-sm text-green-600" role="status">
+        <Check className="h-4 w-4" />
+        Schedule saved to your calendar.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      {applyState === 'applying' ? (
+        <Button size="sm" disabled className="gap-1">
+          <Loader2 className="h-3 w-3 animate-spin" /> Saving schedule…
+        </Button>
+      ) : (
+        <Button size="sm" onClick={onApplyPlan} className="gap-1">
+          <CalendarCheck className="h-4 w-4" /> Apply schedule ({scheduledCount})
+        </Button>
+      )}
+      {applyState === 'error' && (applyErrors?.length ?? 0) > 0 && (
+        <div className="mt-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2 text-xs text-left">
+          <div className="flex items-center gap-1 font-medium text-destructive mb-1">
+            <AlertTriangle className="h-3 w-3" />
+            Some tasks could not be placed:
+          </div>
+          <ul className="space-y-0.5 text-muted-foreground">
+            {applyErrors!.map((err, i) => (
+              <li key={i}>• {err}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {applyState === 'idle' && (
+        <p className="text-xs text-muted-foreground mt-1">
+          Nothing is saved until you apply — reviewing is safe.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function ChatMessage({
   role,
   content,
   recommendations = [],
+  plan,
+  applyState,
+  applyErrors,
   onAccept,
   onReject,
   onAdjust,
+  onApplyPlan,
   tasks,
 }: {
   role: 'user' | 'assistant';
   content: string;
   recommendations?: AIRecommendation[];
+  plan?: PlanScheduleResponse;
+  applyState?: ApplyState;
+  applyErrors?: string[];
   onAccept: (id: string) => void;
   onReject: (id: string) => void;
   onAdjust: (id: string, changes: ScheduleChange[]) => void;
+  onApplyPlan?: () => void;
   tasks: Task[];
 }) {
   return (
@@ -354,6 +436,14 @@ function ChatMessage({
         >
           <p className="whitespace-pre-wrap">{content}</p>
         </div>
+        {plan && onApplyPlan && (
+          <PlanApplyBar
+            plan={plan}
+            applyState={applyState}
+            applyErrors={applyErrors}
+            onApplyPlan={onApplyPlan}
+          />
+        )}
         {recommendations.length > 0 && (
           <div className="mt-3 space-y-2" role="list" aria-label="AI recommendations">
             {recommendations.map((rec) => (
@@ -373,20 +463,8 @@ function ChatMessage({
   );
 }
 
-export function AIPlanner({
-  tasks,
-  events,
-  energyForecast,
-  onApplyRecommendations,
-  onDismissRecommendations,
-}: AIPlannerProps) {
-  const [messages, setMessages] = React.useState<
-    Array<{
-      role: 'user' | 'assistant';
-      content: string;
-      recommendations?: AIRecommendation[];
-    }>
-  >([
+export function AIPlanner({ tasks, events, energyForecast, onScheduleApplied }: AIPlannerProps) {
+  const [messages, setMessages] = React.useState<PlannerChatMessage[]>([
     {
       role: 'assistant',
       content:
@@ -406,12 +484,102 @@ export function AIPlanner({
     scrollToBottom();
   }, [messages]);
 
-  const handleAccept = (id: string) => {
+  const describeFailure = (taskId: string, reason: string): string => {
+    const title = tasks.find((t) => t.id === taskId)?.title ?? `task ${taskId.slice(0, 8)}…`;
+    switch (reason) {
+      case 'past_deadline':
+        return `${title} — can no longer finish before its deadline`;
+      case 'already_completed':
+        return `${title} — already completed`;
+      case 'not_found':
+      case 'not_schedulable':
+        return `${title} — no longer schedulable`;
+      default:
+        return `${title} — ${reason.replace(/_/g, ' ')}`;
+    }
+  };
+
+  /** Persist placements server-side; returns per-task failures (empty = all good). */
+  const applyTaskIds = React.useCallback(
+    async (taskIds: string[]): Promise<string[]> => {
+      try {
+        const result = await applyPlanSchedule(taskIds);
+        onScheduleApplied?.();
+        return result.failed.map((f) => `${f.taskId}:${f.reason}`);
+      } catch {
+        // Whole-request failure (rate limit, network, server error).
+        return taskIds.map((id) => `${id}:request_failed`);
+      }
+    },
+    [onScheduleApplied]
+  );
+
+  const handleApplyAll = async (messageIndex: number, plan: PlanScheduleResponse) => {
+    const scheduledIds = plan.scheduled.map((p) => p.taskId);
+    if (scheduledIds.length === 0) return;
+
+    setMessages((prev) =>
+      prev.map((msg, i) => (i === messageIndex ? { ...msg, applyState: 'applying' } : msg))
+    );
+
+    const failures = await applyTaskIds(scheduledIds);
+    const failedIds = new Set(failures.map((f) => f.split(':')[0]));
+    const errorTexts = failures.map((f) => {
+      const [taskId, reason] = f.split(':');
+      return describeFailure(taskId, reason);
+    });
+
+    setMessages((prev) =>
+      prev.map((msg, i) =>
+        i === messageIndex
+          ? {
+              ...msg,
+              applyState: errorTexts.length === 0 ? 'applied' : 'error',
+              applyErrors: errorTexts,
+              recommendations: msg.recommendations?.map((rec) =>
+                rec.id.startsWith('plan-') && !failedIds.has(rec.id.slice(5))
+                  ? { ...rec, status: 'applied' as const }
+                  : rec
+              ),
+            }
+          : msg
+      )
+    );
+  };
+
+  const handleAccept = async (id: string) => {
+    // Plan-card ids carry the taskId: `plan-${taskId}`.
+    if (!id.startsWith('plan-')) {
+      setMessages((prev) =>
+        prev.map((msg) => ({
+          ...msg,
+          recommendations: msg.recommendations?.map((rec) =>
+            rec.id === id ? { ...rec, status: 'accepted' as const } : rec
+          ),
+        }))
+      );
+      return;
+    }
+
+    const taskId = id.slice(5);
+    const failures = await applyTaskIds([taskId]);
+
+    if (failures.length > 0) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `Couldn't schedule that one: ${describeFailure(taskId, failures[0].split(':')[1])}`,
+        },
+      ]);
+      return;
+    }
+
     setMessages((prev) =>
       prev.map((msg) => ({
         ...msg,
         recommendations: msg.recommendations?.map((rec) =>
-          rec.id === id ? { ...rec, status: 'accepted' as const } : rec
+          rec.id === id ? { ...rec, status: 'applied' as const } : rec
         ),
       }))
     );
@@ -532,9 +700,17 @@ export function AIPlanner({
                 role={msg.role}
                 content={msg.content}
                 recommendations={msg.recommendations || []}
+                plan={msg.plan}
+                applyState={msg.applyState}
+                applyErrors={msg.applyErrors}
                 onAccept={handleAccept}
                 onReject={handleReject}
                 onAdjust={handleAdjust}
+                onApplyPlan={
+                  msg.plan
+                    ? () => handleApplyAll(index, msg.plan as PlanScheduleResponse)
+                    : undefined
+                }
                 tasks={tasks}
               />
             ))}
