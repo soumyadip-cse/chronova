@@ -14,6 +14,7 @@ import {
   tasksAsDeadlineEvents,
   TasksApiError,
 } from '@/lib/tasks-client';
+import { useFocus } from '@/components/providers/focus-provider';
 import type { CalendarEvent, EnergyForecast } from '@/types';
 
 export default function CalendarPage() {
@@ -68,7 +69,25 @@ export default function CalendarPage() {
   // an honest empty forecast rather than fabricated values.
   const energyForecast: EnergyForecast[] = [];
 
+  const { openFocusMode } = useFocus();
+
   const handleEventClick = (event: CalendarEvent) => {
+    // Persisted scheduler blocks start Focus Mode with their block attached so
+    // completion flows through the real telemetry pipeline.
+    if (event.type === 'schedule' && event.scheduleBlockId && event.taskId && !event.isCompleted) {
+      openFocusMode(
+        {
+          id: event.taskId,
+          title: event.title,
+          estimatedMinutes: Math.max(
+            1,
+            Math.round((event.end.getTime() - event.start.getTime()) / 60000)
+          ),
+        },
+        { scheduleBlockId: event.scheduleBlockId }
+      );
+      return;
+    }
     if (event.taskId) {
       console.log('Open task:', event.taskId);
     }

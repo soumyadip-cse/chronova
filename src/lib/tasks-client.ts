@@ -6,6 +6,8 @@ import type {
   CalendarEvent,
   ScheduledBlock,
   PlanApplyResponse,
+  FocusSessionEndInfo,
+  InsightsResponse,
 } from '@/types';
 
 interface ApiTaskRow {
@@ -280,4 +282,40 @@ export async function applyPlanSchedule(taskIds: string[]): Promise<PlanApplyRes
     applied: Array.isArray(data.applied) ? data.applied : [],
     failed: Array.isArray(data.failed) ? data.failed : [],
   };
+}
+
+// ---------- Focus telemetry ----------
+
+export interface CompleteFocusInput extends FocusSessionEndInfo {
+  taskId?: string | null;
+  scheduleBlockId?: string | null;
+}
+
+/**
+ * Persist a finished focus session through the existing /api/focus pipeline.
+ * The server owns completion side-effects: the schedule block and task are
+ * marked complete server-side, scoped to the session user.
+ */
+export async function completeFocusSession(input: CompleteFocusInput): Promise<void> {
+  const res = await fetch('/api/focus', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      taskId: input.taskId ?? null,
+      scheduleBlockId: input.scheduleBlockId ?? null,
+      durationMinutes: Math.max(1, Math.round(input.elapsedMinutes)),
+      interrupted: input.interrupted,
+    }),
+  });
+  if (!res.ok) throw new TasksApiError(res.status, await parseError(res));
+}
+
+// ---------- Insights ----------
+
+export type InsightsRange = 7 | 30;
+
+export async function fetchInsights(days: InsightsRange): Promise<InsightsResponse> {
+  const res = await fetch(`/api/insights?days=${days}`, { cache: 'no-store' });
+  if (!res.ok) throw new TasksApiError(res.status, await parseError(res));
+  return (await res.json()) as InsightsResponse;
 }

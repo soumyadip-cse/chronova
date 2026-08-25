@@ -94,6 +94,18 @@ export interface PlanApplyResponse {
   failed: ApplyFailure[];
 }
 
+/** Reported by Focus Mode when a session ends (completed or interrupted). */
+export interface FocusSessionEndInfo {
+  elapsedMinutes: number;
+  interrupted: boolean;
+}
+
+export interface InsightsResponse {
+  days: number;
+  generatedAt: string;
+  data: InsightData;
+}
+
 export interface EnergyForecast {
   hour: number;
   level: EnergyLevel;

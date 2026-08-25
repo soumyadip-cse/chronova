@@ -25,6 +25,7 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/hooks/use-toast';
+import type { FocusSessionEndInfo } from '@/types';
 
 const COMPLETION_MESSAGES = [
   'One less thing to carry.',
@@ -64,6 +65,8 @@ interface FocusModeProps {
   estimatedMinutes?: number;
   onComplete: () => void;
   onExit: () => void;
+  /** Fires exactly once when the session ends (completed or interrupted). */
+  onSessionEnd?: (info: FocusSessionEndInfo) => void;
 }
 
 export function FocusMode({
@@ -72,6 +75,7 @@ export function FocusMode({
   estimatedMinutes = 50,
   onComplete,
   onExit,
+  onSessionEnd,
 }: FocusModeProps) {
   const [isRunning, setIsRunning] = React.useState(false);
   const [timeRemaining, setTimeRemaining] = React.useState(estimatedMinutes * 60);
@@ -88,6 +92,10 @@ export function FocusMode({
   const audioRefs = React.useRef<Map<string, HTMLAudioElement>>(new Map());
   const intervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const completionTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  // Seconds actually spent running, capped at the session duration.
+  const elapsedRef = React.useRef(0);
+  // Guards against a second session-end fire when exiting via the overlay.
+  const sessionEndedRef = React.useRef(false);
 
   React.useEffect(() => {
     SOUNDSCAPES.forEach((s) => {
@@ -133,6 +141,7 @@ export function FocusMode({
     playSound(selectedSound);
 
     intervalRef.current = setInterval(() => {
+      elapsedRef.current = Math.min(initialDuration, elapsedRef.current + 1);
       setTimeRemaining((prev) => {
         if (prev <= 1) {
           handleComplete();
@@ -154,6 +163,18 @@ export function FocusMode({
     stopAllSounds();
   }, [stopAllSounds]);
 
+  const fireSessionEnd = React.useCallback(
+    (interrupted: boolean) => {
+      if (sessionEndedRef.current) return;
+      sessionEndedRef.current = true;
+      onSessionEnd?.({
+        elapsedMinutes: Math.floor(elapsedRef.current / 60),
+        interrupted,
+      });
+    },
+    [onSessionEnd]
+  );
+
   const handleComplete = React.useCallback(() => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current);
@@ -163,6 +184,7 @@ export function FocusMode({
     setIsRunning(false);
     setTimeRemaining(0);
     setProgress(100);
+    fireSessionEnd(false);
 
     const message = COMPLETION_MESSAGES[Math.floor(Math.random() * COMPLETION_MESSAGES.length)];
     setCompletionMessage(message);
@@ -172,10 +194,19 @@ export function FocusMode({
       setShowCompletion(false);
       onComplete();
     }, 3000);
-  }, [stopAllSounds, onComplete]);
+  }, [stopAllSounds, onComplete, fireSessionEnd]);
+
+  const handleExit = React.useCallback(() => {
+    // Leaving mid-session is an interruption; the provider decides whether it
+    // is worth persisting (sub-minute sessions are discarded there).
+    fireSessionEnd(true);
+    onExit();
+  }, [fireSessionEnd, onExit]);
 
   const resetTimer = React.useCallback(() => {
     pauseTimer();
+    elapsedRef.current = 0;
+    sessionEndedRef.current = false;
     setTimeRemaining(initialDuration);
     setProgress(0);
   }, [pauseTimer, initialDuration]);
@@ -201,7 +232,7 @@ export function FocusMode({
           break;
         case 'Escape':
           e.preventDefault();
-          onExit();
+          handleExit();
           break;
         case 'Enter':
           if (e.metaKey || e.ctrlKey) {
@@ -234,7 +265,15 @@ export function FocusMode({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isRunning, startTimer, pauseTimer, handleComplete, onExit, initialDuration, timeRemaining]);
+  }, [
+    isRunning,
+    startTimer,
+    pauseTimer,
+    handleComplete,
+    handleExit,
+    initialDuration,
+    timeRemaining,
+  ]);
 
   React.useEffect(() => {
     if (isRunning) {
@@ -278,7 +317,7 @@ export function FocusMode({
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={onExit}
+                  onClick={handleExit}
                   className="text-muted-foreground hover:text-foreground"
                   aria-label="Exit focus mode"
                 >
